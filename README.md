@@ -4,8 +4,19 @@
 (Préliminaire → Demi-finale → Finale).
 
 ## How to play
-Open `index.html` in a browser. There is nothing to install, but you need an internet connection: anime and images
-are loaded live from the free [AniList](https://anilist.co) API.
+Open the site (or `index.html`) in a browser. There is nothing to install, but you need an internet connection: anime and
+images are loaded live from the free [AniList](https://anilist.co) API.
+
+### 📱 Online: each player on their own phone
+1. Player 1 picks a nickname and taps **Créer une salle**. A 5-letter code appears.
+2. They tap **Partager le lien** (or just say the code) to send it to the others.
+3. The others open the link (or type the code), pick a nickname, and tap **Rejoindre**.
+4. When everyone shows up in the room, the host taps **Lancer la partie**. Each phone gets its own big **BUZZ !** button.
+
+Up to 4 players. The host's phone runs the game, so keep the page open on it until the end.
+The phones connect directly to each other (WebRTC through [PeerJS](https://peerjs.com), whose free public server is used to find each other).
+
+### 📺 Same screen: one device for everyone
 
 | Manche | Format |
 |---|---|

@@ -1,5 +1,12 @@
 /* ==========================================================
    Anime Quiz Champion — game logic
+   ----------------------------------------------------------
+   Architecture: the HOST device runs the game (rounds, timers,
+   question bank) and describes what to show in G.view. Every
+   device (host included) draws G.view with render(). In online
+   mode the host sends G.view to the guests, and guests send
+   their actions (buzz, answer…) back to the host.
+   In "same screen" mode there is just one device, the host.
    ========================================================== */
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -8,15 +15,40 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&a
 const KEYS = ['a', 'p', 'v', 'm'];
 const COLORS = ['#ff4d6d', '#4dabff', '#ffd43b', '#69db7c'];
 
+function freshView() {
+  if (typeof seen !== 'undefined') { seen.flash = seen.sound = seen.toast = 0; seen.screen = ''; }
+  return {
+    screen: 'home', n: 0, players: [], online: false,
+    scores: [], status: '', qInfo: '', roundLabel: '', canSkip: false,
+    timer: null, grid: null, panel: {}, overlay: null, buzz: { open: false, ids: [] },
+    toast: null, flash: null, sound: null, prefetch: [],
+    intro: null, end: null, champ: null, lobby: null, loading: '',
+  };
+}
+
 const G = {
   players: [],
   settings: {},
   bank: null,
   round: null,
-  gen: 0,          // incremented on quit, cancels pending async work
+  gen: 0,              // incremented on quit, cancels pending async work
   timers: new Set(),
-  override: null,  // token for the "C'était bon !" button
+  timerRef: null,      // timer shown in the timer bar (host)
+  override: null,      // {id, fn} for the "C'était bon !" button
+  handlers: {},        // host-side button handlers: {action: {fn, who}}
+  view: freshView(),
+  // network
+  online: false,
+  isHost: true,
+  me: null,            // my player id (online)
+  peer: null,
+  hostConn: null,
+  inGame: false,
+  nextId: 0,
 };
+const byId = id => G.players.find(p => p.id === id);
+const activePlayers = () => G.players.filter(p => !p.eliminated);
+const plural = (n, w) => `${n} ${w}${n > 1 ? 's' : ''}`;
 
 /* ---------------- Sound (WebAudio, no files) ---------------- */
 const Sound = (() => {
@@ -24,6 +56,7 @@ const Sound = (() => {
   function tone(freq, dur, type = 'sine', vol = 0.15, delay = 0) {
     try {
       ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
+      if (ctx.state === 'suspended') ctx.resume();
       const t = ctx.currentTime + delay;
       const o = ctx.createOscillator(), g = ctx.createGain();
       o.type = type;
@@ -35,6 +68,7 @@ const Sound = (() => {
     } catch (e) { /* audio not available */ }
   }
   return {
+    unlock() { tone(1, 0.01, 'sine', 0.0001); },
     buzz() { tone(240, 0.3, 'square', 0.12); },
     good() { tone(660, 0.12, 'sine', 0.2); tone(990, 0.22, 'sine', 0.2, 0.12); },
     bad() { tone(160, 0.4, 'sawtooth', 0.1); },
@@ -43,11 +77,10 @@ const Sound = (() => {
   };
 })();
 
-/* ---------------- Timer ---------------- */
+/* ---------------- Timer (host only) ---------------- */
 class Timer {
-  constructor(ms, onEnd, onTick) {
-    this.total = ms; this.left = ms;
-    this.onEnd = onEnd; this.onTick = onTick;
+  constructor(ms, onEnd) {
+    this.total = ms; this.left = ms; this.onEnd = onEnd;
     this.running = false; this.id = null;
     G.timers.add(this);
   }
@@ -56,137 +89,90 @@ class Timer {
     this.running = true;
     this.last = performance.now();
     this.id = setInterval(() => this._step(), 50);
-    if (this.onTick) this.onTick(this);
+    touch();
     return this;
   }
   _step() {
     const now = performance.now();
     this.left -= now - this.last; this.last = now;
-    if (this.left <= 0) {
-      this.left = 0; this.stop();
-      if (this.onTick) this.onTick(this);
-      if (this.onEnd) this.onEnd();
-      return;
-    }
-    if (this.onTick) this.onTick(this);
+    if (this.left <= 0) { this.left = 0; this.stop(); if (this.onEnd) this.onEnd(); }
   }
   pause() {
     if (!this.running) return;
     this.left = Math.max(1, this.left - (performance.now() - this.last));
     clearInterval(this.id); this.running = false;
+    touch();
   }
-  stop() { clearInterval(this.id); this.running = false; G.timers.delete(this); }
-  get frac() { return this.left / this.total; }
+  stop() { clearInterval(this.id); this.running = false; G.timers.delete(this); touch(); }
+  liveLeft() { return this.running ? Math.max(0, this.left - (performance.now() - this.last)) : this.left; }
+  snapshot() { return { left: this.liveLeft(), total: this.total, running: this.running, mode: this.mode, secs: !!this.showSecs }; }
 }
-function stopAllTimers() { [...G.timers].forEach(t => t.stop()); }
+function stopAllTimers() { [...G.timers].forEach(t => t.stop()); G.timerRef = null; }
 
-/* ---------------- UI helpers ---------------- */
-function show(id) { $$('.screen').forEach(s => s.classList.toggle('active', s.id === id)); }
-function setStatus(html) { $('#status').innerHTML = html || ''; }
-function setQInfo(html) { $('#qInfo').innerHTML = html || ''; }
-function setBar(frac, mode) {
-  const bar = $('#timerBar div');
-  bar.style.width = Math.max(0, Math.min(1, frac)) * 100 + '%';
-  bar.className = (mode === 'answer' ? 'answer ' : '') + (frac < 0.25 ? 'low' : '');
+/* ==========================================================
+   View state (host) — every change schedules a render + broadcast
+   ========================================================== */
+let flushQueued = false;
+function touch() {
+  if (!G.isHost || flushQueued) return;
+  flushQueued = true;
+  queueMicrotask(() => { flushQueued = false; flush(); });
 }
-function setGrid(q, revealed = 4) {
-  $$('#grid .cell').forEach((cell, i) => {
-    const img = cell.querySelector('img');
-    if (q && i < revealed) {
-      const im = q.images[i];
-      if (img.getAttribute('src') !== im.url) img.src = im.url;
-      cell.classList.toggle('scene', im.kind === 'scene');
-      cell.classList.add('shown');
-    } else {
-      cell.classList.remove('shown', 'scene');
-      img.removeAttribute('src');
-    }
-  });
+function flush() {
+  const v = G.view;
+  v.online = G.online;
+  v.timer = G.timerRef ? G.timerRef.snapshot() : null;
+  v.players = G.players.map(p => ({ id: p.id, name: p.name, color: p.color, key: p.key, offline: !!p.offline }));
+  render(v);
+  if (G.online) Net.broadcast({ t: 'view', view: v });
 }
-function flash(kind) {
-  const g = $('#grid');
-  g.classList.remove('flash-good', 'flash-bad');
-  void g.offsetWidth;
-  g.classList.add('flash-' + kind);
-}
+const ui = {
+  screen(s) { G.view.screen = s; touch(); },
+  status(h) { G.view.status = h || ''; touch(); },
+  qInfo(h) { G.view.qInfo = h || ''; touch(); },
+  grid(q, revealed = 4) { G.view.grid = q ? { images: q.images, revealed } : null; touch(); },
+  flash(kind) { G.view.flash = { kind, n: ++G.view.n }; touch(); },
+  sound(name) { G.view.sound = { name, n: ++G.view.n }; touch(); },
+  toast(html, o = {}) { G.view.toast = { html, kind: o.kind || '', ms: o.ms || 2200, action: o.action || null, n: ++G.view.n }; touch(); },
+  hideToast() { G.view.toast = { hide: true, n: ++G.view.n }; touch(); },
+  panel(p) { G.view.panel = p || {}; touch(); },
+  overlay(o) { G.view.overlay = o; touch(); },
+  scores(list) { G.view.scores = list; touch(); },
+  buzz(open, ids) { G.view.buzz = { open: !!open, ids: ids || [] }; touch(); },
+  timer(t, mode, secs) { G.timerRef = t; if (t) { t.mode = mode; t.showSecs = !!secs; } touch(); },
+  prefetch() {
+    if (!G.bank) return;
+    G.view.prefetch = G.bank.ready.slice(0, 2).flatMap(q => q.images.map(i => i.url));
+    touch();
+  },
+};
 
-let toastTimeout;
-function toast(html, opts = {}) {
-  const t = $('#toast');
-  clearTimeout(toastTimeout);
-  t.innerHTML = `<span>${html}</span>` + (opts.action ? `<button class="btn small gold">${esc(opts.action)}</button>` : '');
-  t.className = 'toast ' + (opts.kind || '');
-  if (opts.action) {
-    t.querySelector('button').onclick = () => { hideToast(); opts.onAction(); };
-  }
-  toastTimeout = setTimeout(hideToast, opts.ms || 2200);
+// Host-side handlers for buttons ("next", "ready"…). who: 'any' | 'host' | player id
+function on(action, fn, who = 'any') { G.handlers[action] = { fn, who }; }
+function allowed(pid, who) {
+  if (!G.online || pid == null) return true;
+  if (who === 'any' || pid === G.me) return true; // the host may always click
+  return pid === who;
 }
-function hideToast() { clearTimeout(toastTimeout); $('#toast').className = 'toast hidden'; }
-
-function showOverlay(html, onGo) {
-  const o = $('#overlay');
-  o.innerHTML = `<div class="overlay-card">${html}</div>`;
-  o.classList.remove('hidden');
-  const btn = o.querySelector('[data-enter]');
-  if (btn) { btn.onclick = onGo; setTimeout(() => btn.focus(), 50); }
-}
-function hideOverlay() { $('#overlay').classList.add('hidden'); $('#overlay').innerHTML = ''; }
-
-function renderScores(players, { score, badge, cls }) {
-  $('#scoreboard').innerHTML = players.map(p => {
-    const classes = (cls ? cls(p) : []).filter(Boolean).join(' ');
-    return `<button class="pcard ${classes}" data-id="${p.id}" style="--c:${p.color}">
-        <kbd>${p.key.toUpperCase()}</kbd>
-        <span class="pname">${esc(p.name)}</span>
-        <span class="pscore">${score(p)}</span>
-        <span class="pbadge">${badge ? badge(p) || '' : ''}</span>
-      </button>`;
-  }).join('');
-  $$('#scoreboard .pcard').forEach(el => {
-    el.onclick = () => buzz(G.players.find(p => p.id === +el.dataset.id));
-  });
+// Same rule, seen from this device (decides whether a button is shown)
+function canDo(who) {
+  if (!G.online || G.isHost || who === 'any') return true;
+  return who === G.me;
 }
 
-function revealPanel(media, msg, kind, nextLabel, onNext, keep) {
+function revealObj(media, msg, kind, nextLabel) {
   const romaji = media.title.romaji && media.title.romaji !== media.display ? media.title.romaji : '';
   const cover = (media.coverImage && (media.coverImage.large || media.coverImage.extraLarge)) || '';
-  const html = `
-    <div class="reveal ${kind}">
-      ${cover ? `<img src="${esc(cover)}" alt="" />` : ''}
-      <div>
-        <div class="rmsg">${msg}</div>
-        <div class="rtitle">${esc(media.display)}</div>
-        ${romaji ? `<div class="rsub">${esc(romaji)}</div>` : ''}
-      </div>
-    </div>
-    <button id="nextBtn" class="btn primary" data-enter>${nextLabel} ▶</button>`;
-  const area = $('#answerArea');
-  if (keep) area.insertAdjacentHTML('afterbegin', html); else area.innerHTML = html;
-  $('#nextBtn').onclick = onNext;
-  setTimeout(() => $('#nextBtn') && $('#nextBtn').focus(), 30);
+  return { msg, kind, title: media.display, sub: romaji, cover, next: nextLabel ? { label: nextLabel, who: 'any' } : null };
 }
-
-function answerForm(placeholder, onSubmit, withPass) {
-  $('#answerArea').innerHTML = `
-    <form id="ansForm" class="ans-form" autocomplete="off">
-      <input id="ansInput" type="text" placeholder="${esc(placeholder)}" spellcheck="false" autocapitalize="off" />
-      <button class="btn primary" type="submit">Valider</button>
-      ${withPass ? '<button type="button" id="passBtn" class="btn ghost">Passer</button>' : ''}
-    </form>`;
-  $('#ansForm').onsubmit = e => { e.preventDefault(); onSubmit($('#ansInput').value); };
-  if (withPass) $('#passBtn').onclick = () => onSubmit(null);
-  setTimeout(() => $('#ansInput') && $('#ansInput').focus(), 30);
-}
-
-const activePlayers = () => G.players.filter(p => !p.eliminated);
-const plural = (n, w) => `${n} ${w}${n > 1 ? 's' : ''}`;
 
 async function loadQuestion() {
   const gen = G.gen;
-  setStatus('<span class="dots">Chargement de la question</span>');
+  ui.status('<span class="dots">Chargement de la question</span>');
   try {
     const q = await G.bank.next();
     if (gen !== G.gen) return undefined; // cancelled
+    ui.prefetch();
     return q;
   } catch (e) {
     if (gen === G.gen) fatal(e);
@@ -194,8 +180,33 @@ async function loadQuestion() {
   }
 }
 
-function buzz(p) {
-  if (p && G.round && G.round.onBuzz) G.round.onBuzz(p);
+/* ==========================================================
+   Actions: every click / key goes through act()
+   ========================================================== */
+function act(a, v) {
+  if (G.isHost) handleAction(G.online ? G.me : null, a, v);
+  else Net.send({ t: 'act', a, v });
+}
+function handleAction(pid, a, v) {
+  const R = G.round;
+  switch (a) {
+    case 'buzz': {
+      const p = byId(pid == null ? v : pid);
+      if (p && R && R.onBuzz) R.onBuzz(p);
+      break;
+    }
+    case 'choice': if (R && R.choose) R.choose(+v, pid); break;
+    case 'answer': if (R && R.answer) R.answer(String(v || '').slice(0, 100), pid); break;
+    case 'pass': if (R && R.pass) R.pass(pid); break;
+    case 'skip': if (allowed(pid, 'host') && R && R.skip) R.skip(); break;
+    case 'override':
+      if (G.override && G.override.id === +v) { const f = G.override.fn; G.override = null; ui.hideToast(); f(); }
+      break;
+    default: {
+      const h = G.handlers[a];
+      if (h && allowed(pid, h.who)) { delete G.handlers[a]; h.fn(); }
+    }
+  }
 }
 
 /* ==========================================================
@@ -205,46 +216,58 @@ const Prelim = {
   step: 'Manche 1',
   title: 'Préliminaire',
   subtitle: '9 points gagnants',
+  canSkip: true,
   rules: [
     '4 images, 1 animé : buzzez dès que vous avez trouvé !',
-    'Après le buzz : 8 secondes pour choisir parmi 4 réponses (touches 1 à 4).',
+    'Après le buzz : 8 secondes pour choisir parmi 4 réponses.',
     'Questions 1-3 : 1 point · 4-6 : 2 points · ensuite : 3 points.',
     'Mauvaise réponse = vous êtes bloqué, les autres peuvent buzzer.',
     'Premier à 9 points = qualifié (et +1 point bonus en finale).',
   ],
-  canSkip: true,
+  extraRules() {
+    return activePlayers().length >= 3 ? ['À ' + activePlayers().length + ' joueurs, le dernier non qualifié est éliminé.'] : [];
+  },
 
   begin() {
     this.players = activePlayers();
     this.players.forEach(p => { p.r1 = 0; p.qualified = false; });
     this.order = [];
     this.qCount = 0;
-    this.q = null;
     this.locked = new Set();
+    this.buzzer = null;
     this.next();
   },
-  extraRules() {
-    return this.players && this.players.length >= 3
-      ? ['À ' + activePlayers().length + ' joueurs, le dernier non qualifié est éliminé.']
-      : [];
+  eligible(p) { return this.players.includes(p) && !p.qualified && !this.locked.has(p.id) && !p.offline; },
+  scores() {
+    ui.scores(this.players.map(p => ({
+      id: p.id,
+      score: `${p.r1}<small> / 9</small>`,
+      badge: p.qualified ? 'Qualifié ✔' : this.locked.has(p.id) ? 'Bloqué' : '',
+      cls: [p.qualified && 'qualified', this.locked.has(p.id) && 'locked', this.buzzer === p && 'buzzed'].filter(Boolean),
+    })));
+    ui.buzz(this.state === 'open', this.players.filter(p => this.eligible(p)).map(p => p.id));
   },
-  eligible(p) { return this.players.includes(p) && !p.qualified && !this.locked.has(p.id); },
-  render() {
-    renderScores(this.players, {
-      score: p => `${p.r1}<small> / 9</small>`,
-      badge: p => p.qualified ? 'Qualifié ✔' : this.locked.has(p.id) ? 'Bloqué' : '',
-      cls: p => [p.qualified && 'qualified', this.locked.has(p.id) && 'locked', this.buzzer === p && 'buzzed'],
+  panel(reveal) {
+    const q = this.q;
+    ui.panel({
+      reveal,
+      choices: {
+        items: q.choices.map(m => m.display),
+        armed: this.state === 'answering' ? this.buzzer.id : null,
+        wrong: [...this.wrongChoices],
+        right: this.state === 'reveal' ? q.choices.findIndex(m => m.id === q.media.id) : null,
+      },
     });
   },
   valueFor(n) { return n <= 3 ? 1 : n <= 6 ? 2 : 3; },
 
   async next() {
+    G.handlers = {};
     this.state = 'loading';
     this.buzzer = null;
     this.locked = new Set();
-    $('#answerArea').innerHTML = '';
-    setGrid(null, 0); setBar(1);
-    this.render();
+    ui.panel({}); ui.grid(null); ui.timer(null);
+    this.scores();
     const q = await loadQuestion();
     if (q === undefined) return;
     if (q === null) return this.end('Plus de questions disponibles !');
@@ -253,74 +276,60 @@ const Prelim = {
     this.value = this.valueFor(this.qCount);
     this.wrongChoices = new Set();
     q.choices = shuffle([q.media, ...G.bank.distractors(q.media)]);
-    setGrid(q, 4);
-    setQInfo(`Question ${this.qCount} · <b>${plural(this.value, 'point')}</b>`);
-    this.renderChoices();
+    ui.grid(q, 4);
+    ui.qInfo(`Question ${this.qCount} · <b>${plural(this.value, 'point')}</b>`);
     this.state = 'open';
-    setStatus('Buzzez quand vous avez trouvé !');
-    this.render();
-    this.qTimer = new Timer(20000, () => this.timeUp(), t => setBar(t.frac)).start();
-  },
-
-  renderChoices() {
-    $('#answerArea').innerHTML = `<div class="choices">${this.q.choices.map((m, i) =>
-      `<button class="choice" data-i="${i}"><kbd>${i + 1}</kbd><span>${esc(m.display)}</span></button>`).join('')}</div>`;
-    $$('#answerArea .choice').forEach(b => { b.onclick = () => this.choose(+b.dataset.i); });
-    this.updateChoices();
-  },
-  updateChoices() {
-    $$('#answerArea .choice').forEach(b => {
-      const i = +b.dataset.i;
-      b.classList.toggle('armed', this.state === 'answering');
-      b.classList.toggle('wrong', this.wrongChoices.has(i));
-      b.disabled = this.wrongChoices.has(i) || this.state === 'reveal';
-      if (this.state === 'reveal' && this.q.choices[i].id === this.q.media.id) b.classList.add('right');
-    });
+    this.panel();
+    ui.status('Buzzez quand vous avez trouvé !');
+    this.scores();
+    this.qTimer = new Timer(20000, () => this.timeUp()).start();
+    ui.timer(this.qTimer, 'q');
   },
 
   onBuzz(p) {
     if (this.state !== 'open' || !this.eligible(p)) return;
-    Sound.buzz();
+    ui.sound('buzz');
     this.state = 'answering';
     this.buzzer = p;
     this.qTimer.pause();
-    setStatus(`<b style="color:${p.color}">${esc(p.name)}</b> a buzzé ! Choisis ta réponse (1-4)`);
-    this.aTimer = new Timer(8000, () => this.wrong(null), t => setBar(t.frac, 'answer')).start();
-    this.render(); this.updateChoices();
+    ui.status(`<b style="color:${p.color}">${esc(p.name)}</b> a buzzé ! Choix de la réponse…`);
+    this.aTimer = new Timer(8000, () => this.wrong(null)).start();
+    ui.timer(this.aTimer, 'answer');
+    this.panel(); this.scores();
   },
-  onChoiceKey(n) { this.choose(n - 1); },
-  choose(i) {
-    if (this.state === 'open') { toast("Buzzez d'abord !"); return; }
+  choose(i, pid) {
     if (this.state !== 'answering' || this.wrongChoices.has(i) || !this.q.choices[i]) return;
+    if (G.online && pid !== this.buzzer.id) return;
     this.aTimer.stop();
     if (this.q.choices[i].id === this.q.media.id) this.correct(); else this.wrong(i);
   },
   correct() {
     const p = this.buzzer;
-    Sound.good(); flash('good');
+    ui.sound('good'); ui.flash('good');
     p.r1 += this.value;
     if (p.r1 >= 9 && !p.qualified) { p.qualified = true; this.order.push(p); }
     this.stopTimers();
     this.state = 'reveal';
     this.buzzer = null;
     const done = this.isOver();
-    this.render(); this.updateChoices();
-    setStatus(p.qualified && done ? '' : p.qualified ? `<b>${esc(p.name)}</b> est qualifié(e) !` : '');
-    revealPanel(this.q.media, `✔ ${esc(p.name)} +${plural(this.value, 'point')}`, 'good',
-      done ? 'Résultats' : 'Question suivante', () => done ? this.end() : this.next(), true);
+    ui.status(p.qualified && !done ? `<b>${esc(p.name)}</b> est qualifié(e) !` : '');
+    this.panel(revealObj(this.q.media, `✔ ${esc(p.name)} +${plural(this.value, 'point')}`, 'good', done ? 'Résultats' : 'Question suivante'));
+    on('next', () => done ? this.end() : this.next());
+    this.scores();
   },
   wrong(i) {
     const p = this.buzzer;
-    Sound.bad(); flash('bad');
+    ui.sound('bad'); ui.flash('bad');
     this.locked.add(p.id);
     if (i != null) this.wrongChoices.add(i);
     this.buzzer = null;
-    toast(i == null ? `⏱ ${esc(p.name)} trop lent !` : `✘ Mauvaise réponse pour ${esc(p.name)}`, { kind: 'bad' });
+    ui.toast(i == null ? `⏱ ${esc(p.name)} trop lent !` : `✘ Mauvaise réponse pour ${esc(p.name)}`, { kind: 'bad' });
     if (this.players.some(x => this.eligible(x))) {
       this.state = 'open';
-      setStatus('Les autres peuvent encore buzzer !');
+      ui.status('Les autres peuvent encore buzzer !');
       this.qTimer.start();
-      this.render(); this.updateChoices();
+      ui.timer(this.qTimer, 'q');
+      this.panel(); this.scores();
     } else {
       this.reveal('Personne n\'a trouvé…');
     }
@@ -331,9 +340,10 @@ const Prelim = {
     this.stopTimers();
     this.state = 'reveal';
     this.buzzer = null;
-    setStatus('');
-    this.render(); this.updateChoices();
-    revealPanel(this.q.media, msg, 'neutral', 'Question suivante', () => this.next(), true);
+    ui.status('');
+    this.panel(revealObj(this.q.media, msg, 'neutral', 'Question suivante'));
+    on('next', () => this.next());
+    this.scores();
   },
   stopTimers() { if (this.qTimer) this.qTimer.stop(); if (this.aTimer) this.aTimer.stop(); },
   isOver() {
@@ -366,6 +376,7 @@ const Semi = {
   step: 'Manche 2',
   title: 'Demi-finale',
   subtitle: '4 à la suite',
+  canSkip: false,
   rules: [
     'Chacun son tour : 60 secondes au chrono.',
     'Tape le nom de l\'animé (anglais ou japonais, les petites fautes passent).',
@@ -373,7 +384,6 @@ const Semi = {
     'Classement : meilleure série, puis temps restant, puis nombre de bonnes réponses.',
     'Le vainqueur gagne +2 points d\'avance en finale.',
   ],
-  canSkip: false,
   extraRules() {
     return activePlayers().length > 2 ? ['Le dernier de la demi-finale est éliminé.'] : [];
   },
@@ -383,98 +393,104 @@ const Semi = {
     this.players.forEach(p => { p.r2 = { best: 0, streak: 0, correct: 0, timeLeft: 0, done: false }; });
     this.turn = -1;
     this.cur = null;
+    ui.buzz(false, []);
     this.nextTurn();
   },
-  render() {
-    renderScores(this.players, {
-      score: p => `${p.r2.best}<small> / 4</small>`,
-      badge: p => p === this.cur && !p.r2.done ? 'À toi !' : p.r2.done ? 'Terminé' : 'En attente',
-      cls: p => [p === this.cur && !p.r2.done && 'buzzed', p.r2.done && 'done'],
-    });
+  scores() {
+    ui.scores(this.players.map(p => ({
+      id: p.id,
+      score: `${p.r2.best}<small> / 4</small>`,
+      badge: p === this.cur && !p.r2.done ? 'À toi !' : p.r2.done ? 'Terminé' : 'En attente',
+      cls: [p === this.cur && !p.r2.done && 'buzzed', p.r2.done && 'done'].filter(Boolean),
+    })));
   },
-  renderStreak() {
-    const s = this.cur ? this.cur.r2.streak : 0;
-    let el = $('#streak');
-    if (!el) {
-      el = document.createElement('div');
-      el.id = 'streak'; el.className = 'streak';
-      $('#answerArea').prepend(el);
-    }
-    el.innerHTML = [0, 1, 2, 3].map(i => `<span class="${i < s ? 'on' : ''}"></span>`).join('') + `<b>${s}/4</b>`;
+  panel() {
+    if (!this.cur || this.state === 'intro') return ui.panel({});
+    ui.panel({
+      streak: this.cur.r2.streak,
+      input: {
+        for: this.cur.id, name: this.cur.name, placeholder: "Nom de l'animé…", pass: true,
+        enabled: this.state === 'open', key: 's' + this.qKey,
+      },
+    });
   },
 
   nextTurn() {
+    G.handlers = {};
     this.turn++;
     if (this.turn >= this.players.length) return this.end();
     this.cur = this.players[this.turn];
     this.state = 'intro';
     this.q = null;
-    setGrid(null, 0); setBar(1); setStatus('');
-    $('#answerArea').innerHTML = '';
-    setQInfo(`Joueur ${this.turn + 1} / ${this.players.length}`);
-    this.render();
-    showOverlay(`
-      <h3 style="color:${this.cur.color}">${esc(this.cur.name)}</h3>
-      <p>60 secondes pour enchaîner <b>4 bonnes réponses</b> d'affilée.</p>
-      <p class="small">Les autres : pas de souffle 🤫</p>
-      <button class="btn primary big" data-enter>Je suis prêt(e) !</button>`, () => this.startTurn());
+    ui.grid(null); ui.timer(null); ui.status(''); ui.panel({});
+    ui.qInfo(`Joueur ${this.turn + 1} / ${this.players.length}`);
+    this.scores();
+    ui.overlay({
+      html: `<h3 style="color:${this.cur.color}">${esc(this.cur.name)}</h3>
+        <p>60 secondes pour enchaîner <b>4 bonnes réponses</b> d'affilée.</p>
+        <p class="small">Les autres : pas de souffle 🤫</p>`,
+      btn: { label: 'Je suis prêt(e) !', a: 'ready', who: this.cur.id },
+      waitFor: this.cur.name,
+    });
+    on('ready', () => this.startTurn(), this.cur.id);
   },
   startTurn() {
-    hideOverlay();
-    this.chrono = new Timer(60000, () => this.timeUp(), t => {
-      setBar(t.frac);
-      setQInfo(`${esc(this.cur.name)} · ⏱ <b>${Math.ceil(t.left / 1000)} s</b>`);
-    });
-    answerForm("Nom de l'animé…", v => this.submit(v), true);
-    this.renderStreak();
-    this.render();
+    ui.overlay(null);
+    this.chrono = new Timer(60000, () => this.timeUp());
+    ui.timer(this.chrono, 'q', true);
     this.next();
   },
   async next() {
     this.state = 'loading';
     this.chrono.pause();
-    const input = $('#ansInput');
-    if (input) input.disabled = true;
+    this.panel();
     const q = await loadQuestion();
     if (q === undefined) return;
     if (this.state !== 'loading') return;
     if (q === null) return this.finishTurn('Plus de questions disponibles !');
     this.q = q;
-    setGrid(q, 4);
-    setStatus('Quel est cet animé ?');
+    this.qKey = q.media.id;
+    ui.grid(q, 4);
+    ui.status(`Au tour de <b style="color:${this.cur.color}">${esc(this.cur.name)}</b> : quel est cet animé ?`);
     this.state = 'open';
-    if (input) { input.disabled = false; input.value = ''; input.focus(); }
+    this.panel();
     this.chrono.start();
   },
+  answer(text, pid) { if (!G.online || pid === (this.cur && this.cur.id)) this.submit(text); },
+  pass(pid) { if (!G.online || pid === (this.cur && this.cur.id)) this.submit(null); },
   submit(text) {
     if (this.state !== 'open') return;
     if (text != null && !text.trim()) return;
     const p = this.cur, r = p.r2, media = this.q.media;
-    const tok = G.override = {};
+    G.override = null;
     if (text != null && Match.isCorrect(text, media)) {
-      Sound.good(); flash('good');
+      ui.sound('good'); ui.flash('good');
       r.streak++; r.correct++; r.best = Math.max(r.best, r.streak);
-      toast(`✔ ${esc(media.display)}`, { kind: 'good', ms: 1300 });
-      if (r.streak >= 4) { r.timeLeft = this.chrono.left; this.renderStreak(); return this.finishTurn('🔥 4 à la suite !'); }
+      ui.toast(`✔ ${esc(media.display)}`, { kind: 'good', ms: 1300 });
+      if (r.streak >= 4) { r.timeLeft = this.chrono.liveLeft(); return this.finishTurn('🔥 4 à la suite !'); }
     } else {
-      Sound.bad(); flash('bad');
+      ui.sound('bad'); ui.flash('bad');
       const prev = r.streak;
       r.streak = 0;
       if (text == null) {
-        toast(`Passé — c'était <b>${esc(media.display)}</b>`, { ms: 2500 });
+        ui.toast(`Passé — c'était <b>${esc(media.display)}</b>`, { ms: 2500 });
       } else {
-        toast(`✘ « ${esc(text)} » — c'était <b>${esc(media.display)}</b>`, {
-          kind: 'bad', ms: 4000, action: "C'était bon !",
-          onAction: () => {
-            if (G.override !== tok || this.cur !== p || r.done) return;
+        const id = ++G.view.n;
+        G.override = {
+          id, fn: () => {
+            if (this.cur !== p || r.done) return;
             r.streak = prev + 1; r.correct++; r.best = Math.max(r.best, r.streak);
-            Sound.good(); this.renderStreak(); this.render();
-            if (r.streak >= 4) { r.timeLeft = this.chrono.left; this.finishTurn('🔥 4 à la suite !'); }
+            ui.sound('good');
+            if (r.streak >= 4) { r.timeLeft = this.chrono.liveLeft(); return this.finishTurn('🔥 4 à la suite !'); }
+            this.panel(); this.scores();
           },
+        };
+        ui.toast(`✘ « ${esc(text)} » — c'était <b>${esc(media.display)}</b>`, {
+          kind: 'bad', ms: 4000, action: { label: "C'était bon !", v: id },
         });
       }
     }
-    this.renderStreak(); this.render();
+    this.scores();
     this.next();
   },
   timeUp() { if (this.state === 'open' || this.state === 'loading') this.finishTurn('⏱ Temps écoulé !'); },
@@ -485,18 +501,19 @@ const Semi = {
     this.chrono.stop();
     r.done = true;
     G.override = null;
-    hideToast();
-    const input = $('#ansInput'); if (input) input.disabled = true;
-    setStatus('');
-    this.render();
+    ui.hideToast();
+    ui.status('');
+    ui.panel({ streak: r.streak });
+    this.scores();
     const last = this.turn === this.players.length - 1;
-    showOverlay(`
-      <h3>${msg}</h3>
-      <p><b style="color:${p.color}">${esc(p.name)}</b> : meilleure série <b>${r.best}/4</b> · ${plural(r.correct, 'bonne réponse')}</p>
-      ${r.best >= 4 ? `<p class="small">Il restait ${Math.ceil(r.timeLeft / 1000)} s au chrono</p>` : ''}
-      ${pending ? `<p class="small">La dernière question était : <b>${esc(pending.display)}</b></p>` : ''}
-      <button class="btn primary big" data-enter>${last ? 'Résultats' : 'Joueur suivant'}</button>`,
-    () => { hideOverlay(); this.nextTurn(); });
+    ui.overlay({
+      html: `<h3>${msg}</h3>
+        <p><b style="color:${p.color}">${esc(p.name)}</b> : meilleure série <b>${r.best}/4</b> · ${plural(r.correct, 'bonne réponse')}</p>
+        ${r.best >= 4 ? `<p class="small">Il restait ${Math.ceil(r.timeLeft / 1000)} s au chrono</p>` : ''}
+        ${pending ? `<p class="small">La dernière question était : <b>${esc(pending.display)}</b></p>` : ''}`,
+      btn: { label: last ? 'Résultats' : 'Joueur suivant', a: 'ready', who: 'any' },
+    });
+    on('ready', () => { ui.overlay(null); this.nextTurn(); });
   },
   end() {
     this.state = 'over';
@@ -545,95 +562,95 @@ const Final = {
     this.target = G.settings.target;
     this.qCount = 0;
     this.locked = new Set();
+    this.buzzer = null;
     this.next();
   },
-  render() {
-    renderScores(this.players, {
-      score: p => `${p.r3}<small> / ${this.target}</small>`,
-      badge: p => this.locked.has(p.id) ? 'Bloqué' : '',
-      cls: p => [this.locked.has(p.id) && 'locked', this.buzzer === p && 'buzzed'],
-    });
+  scores() {
+    ui.scores(this.players.map(p => ({
+      id: p.id,
+      score: `${p.r3}<small> / ${this.target}</small>`,
+      badge: this.locked.has(p.id) ? 'Bloqué' : '',
+      cls: [this.locked.has(p.id) && 'locked', this.buzzer === p && 'buzzed'].filter(Boolean),
+    })));
+    ui.buzz(this.state === 'open', this.players.filter(p => this.eligible(p)).map(p => p.id));
   },
-  eligible(p) { return this.players.includes(p) && !this.locked.has(p.id); },
+  eligible(p) { return this.players.includes(p) && !this.locked.has(p.id) && !p.offline; },
   value() { return 5 - this.revealed; },
 
   async next() {
+    G.handlers = {};
     this.state = 'loading';
     this.buzzer = null;
     this.locked = new Set();
     this.awarded = false;
     G.override = null;
-    $('#answerArea').innerHTML = '';
-    setGrid(null, 0); setBar(1);
-    this.render();
+    ui.panel({}); ui.grid(null); ui.timer(null);
+    this.scores();
     const q = await loadQuestion();
     if (q === undefined) return;
     if (q === null) {
       const best = this.players.slice().sort((a, b) => b.r3 - a.r3)[0];
-      toast('Plus de questions disponibles : victoire au score !');
       return this.end(best);
     }
     this.q = q;
     this.qCount++;
     this.revealed = 0;
     this.state = 'open';
-    setStatus('Buzzez ! Plus tôt = plus de points');
+    ui.status('Buzzez ! Plus tôt = plus de points');
     this.revealNext();
+    this.scores();
   },
   revealNext() {
     this.revealed++;
-    Sound.reveal();
-    setGrid(this.q, this.revealed);
+    ui.sound('reveal');
+    ui.grid(this.q, this.revealed);
     this.updateInfo();
     const ms = this.revealed < 4 ? 5000 : 8000;
     this.step = new Timer(ms, () => {
       if (this.revealed < 4) this.revealNext();
       else this.reveal('⏱ Personne n\'a trouvé…');
-    }, t => setBar(t.frac));
-    this.step.start();
+    }).start();
+    ui.timer(this.step, 'q');
   },
   updateInfo() {
-    setQInfo(`Question ${this.qCount} · ${plural(this.revealed, 'image')} · <b>${plural(this.value(), 'point')}</b>`);
+    ui.qInfo(`Question ${this.qCount} · ${plural(this.revealed, 'image')} · <b>${plural(this.value(), 'point')}</b>`);
   },
   onBuzz(p) {
     if (this.state !== 'open' || !this.eligible(p)) return;
-    Sound.buzz();
+    ui.sound('buzz');
     this.state = 'answering';
     this.buzzer = p;
     this.buzzValue = this.value();
     this.step.pause();
-    setStatus(`<b style="color:${p.color}">${esc(p.name)}</b> buzze pour <b>${plural(this.buzzValue, 'point')}</b> ! Tape ta réponse`);
-    answerForm("Nom de l'animé…", v => this.answer(v), false);
-    this.aTimer = new Timer(15000, () => this.answer(''), t => setBar(t.frac, 'answer')).start();
-    this.render();
+    ui.status(`<b style="color:${p.color}">${esc(p.name)}</b> buzze pour <b>${plural(this.buzzValue, 'point')}</b> !`);
+    ui.panel({ input: { for: p.id, name: p.name, placeholder: "Nom de l'animé…", pass: false, enabled: true, key: `f${this.qCount}-${p.id}` } });
+    this.aTimer = new Timer(15000, () => this.answer('', null, true)).start();
+    ui.timer(this.aTimer, 'answer');
+    this.scores();
   },
-  answer(text) {
+  answer(text, pid, timeout) {
     if (this.state !== 'answering') return;
+    if (G.online && !timeout && pid !== this.buzzer.id) return;
     this.aTimer.stop();
     const p = this.buzzer, v = this.buzzValue, media = this.q.media;
     if (text && Match.isCorrect(text, media)) return this.correct(p, v);
-    Sound.bad(); flash('bad');
+    ui.sound('bad'); ui.flash('bad');
     this.locked.add(p.id);
     this.buzzer = null;
-    $('#answerArea').innerHTML = '';
-    const tok = G.override = {};
+    ui.panel({});
     if (text && text.trim()) {
-      toast(`✘ ${esc(p.name)} : « ${esc(text)} » refusé`, {
-        kind: 'bad', ms: 4500, action: "C'était bon !",
-        onAction: () => {
-          if (G.override !== tok || this.awarded) return;
-          if (this.aTimer) this.aTimer.stop();
-          this.correct(p, v);
-        },
-      });
+      const id = ++G.view.n;
+      G.override = { id, fn: () => { if (!this.awarded && this.q.media === media) this.correct(p, v); } };
+      ui.toast(`✘ ${esc(p.name)} : « ${esc(text)} » refusé`, { kind: 'bad', ms: 4500, action: { label: "C'était bon !", v: id } });
     } else {
-      toast(`⏱ ${esc(p.name)} trop lent !`, { kind: 'bad' });
+      ui.toast(`⏱ ${esc(p.name)} trop lent !`, { kind: 'bad' });
     }
     if (this.players.some(x => this.eligible(x))) {
       this.state = 'open';
-      setStatus('À l\'adversaire de tenter sa chance !');
+      ui.status('À l\'adversaire de tenter sa chance !');
       this.step.start();
-      this.render();
+      ui.timer(this.step, 'q');
+      this.scores();
     } else {
       this.reveal('Personne n\'a trouvé…');
     }
@@ -643,23 +660,24 @@ const Final = {
     this.awarded = true;
     this.state = 'reveal';
     this.buzzer = null;
-    Sound.good(); flash('good');
+    ui.sound('good'); ui.flash('good');
     p.r3 += v;
-    setGrid(this.q, 4);
-    setStatus('');
+    ui.grid(this.q, 4);
+    ui.status('');
     const won = p.r3 >= this.target;
-    this.render();
-    revealPanel(this.q.media, `✔ ${esc(p.name)} +${plural(v, 'point')}`, 'good',
-      won ? '🏆 Voir le champion' : 'Question suivante', () => won ? this.end(p) : this.next());
+    ui.panel({ reveal: revealObj(this.q.media, `✔ ${esc(p.name)} +${plural(v, 'point')}`, 'good', won ? '🏆 Voir le champion' : 'Question suivante') });
+    on('next', () => won ? this.end(p) : this.next());
+    this.scores();
   },
   reveal(msg) {
     this.stopTimers();
     this.state = 'reveal';
     this.buzzer = null;
-    setGrid(this.q, 4);
-    setStatus('');
-    this.render();
-    revealPanel(this.q.media, msg, 'neutral', 'Question suivante', () => this.next());
+    ui.grid(this.q, 4);
+    ui.status('');
+    ui.panel({ reveal: revealObj(this.q.media, msg, 'neutral', 'Question suivante') });
+    on('next', () => this.next());
+    this.scores();
   },
   skip() { if (this.state === 'open' || this.state === 'answering') this.reveal('Question passée'); },
   stopTimers() { if (this.step) this.step.stop(); if (this.aTimer) this.aTimer.stop(); },
@@ -671,113 +689,97 @@ const Final = {
 };
 
 /* ==========================================================
-   Screens & flow
+   Game flow (host)
    ========================================================== */
-function showIntro(round) {
-  stopAllTimers(); hideToast(); hideOverlay();
+function resetPlay() {
+  stopAllTimers();
+  G.handlers = {};
+  G.override = null;
   G.round = null;
-  const players = activePlayers();
-  round.players = players;
-  $('#introStep').textContent = round.step;
-  $('#introTitle').textContent = round.title;
-  $('#introSubtitle').textContent = round.subtitle;
-  $('#introRules').innerHTML = [...round.rules, ...(round.extraRules ? round.extraRules() : [])].map(r => `<li>${esc(r)}</li>`).join('');
-  $('#introPlayers').innerHTML = players.map(p =>
-    `<span class="chip" style="--c:${p.color}"><kbd>${p.key.toUpperCase()}</kbd>${esc(p.name)}</span>`).join('');
-  $('#introGo').onclick = () => {
-    show('play');
-    $('#roundLabel').innerHTML = `<span>${round.step}</span> ${round.title} <em>${round.subtitle}</em>`;
-    $('#skipBtn').style.display = round.canSkip ? '' : 'none';
-    setQInfo(''); setStatus('');
+  Object.assign(G.view, { overlay: null, panel: {}, grid: null, status: '', qInfo: '', scores: [], buzz: { open: false, ids: [] } });
+  ui.hideToast();
+}
+
+function showIntro(round) {
+  resetPlay();
+  G.view.intro = {
+    step: round.step, title: round.title, subtitle: round.subtitle,
+    rules: [...round.rules, ...(round.extraRules ? round.extraRules() : [])],
+    ids: activePlayers().map(p => p.id),
+  };
+  on('introGo', () => {
+    G.view.roundLabel = `<span>${round.step}</span> ${round.title} <em>${round.subtitle}</em>`;
+    G.view.canSkip = round.canSkip;
+    ui.screen('play');
     G.round = round;
     round.begin();
-  };
-  show('intro');
-  setTimeout(() => $('#introGo').focus(), 50);
+  }, 'host');
+  ui.screen('intro');
 }
 
 function showRoundEnd({ step, title, rows, msg, next }) {
-  stopAllTimers(); hideToast(); hideOverlay();
-  G.round = null;
-  $('#endStep').textContent = step;
-  $('#endTitle').textContent = title;
-  $('#endTable').innerHTML = rows.map(([p, score, status], i) =>
-    `<tr class="${p.eliminated ? 'elim' : ''}"><td>${i + 1}</td><td style="color:${p.color}"><b>${esc(p.name)}</b></td><td>${score}</td><td>${status}</td></tr>`).join('');
-  $('#endMsg').innerHTML = msg;
-  $('#endNext').textContent = next === Final ? 'Place à la finale !' : 'Manche suivante';
-  $('#endNext').onclick = () => showIntro(next);
-  show('roundEnd');
-  setTimeout(() => $('#endNext').focus(), 50);
+  resetPlay();
+  G.view.end = {
+    step, title, msg,
+    rows: rows.map(([p, score, status]) => ({ id: p.id, score, status, elim: !!p.eliminated })),
+    nextLabel: next === Final ? 'Place à la finale !' : 'Manche suivante',
+  };
+  on('endNext', () => showIntro(next), 'host');
+  ui.screen('roundEnd');
 }
 
 function showChampion(winner, finalists) {
-  stopAllTimers(); hideToast(); hideOverlay();
-  G.round = null;
-  Sound.win();
-  $('#champName').textContent = winner.name;
-  $('#champName').style.color = winner.color;
-  $('#champScore').innerHTML = finalists.map(p => `${esc(p.name)} : <b>${p.r3}</b>`).join(' · ');
-  show('champion');
-  confetti();
-  setTimeout(() => $('#replaySame').focus(), 50);
+  resetPlay();
+  G.view.champ = { id: winner.id, scores: finalists.map(p => ({ id: p.id, score: p.r3 })) };
+  on('replay', () => startGame(), 'host');
+  ui.sound('win');
+  ui.screen('champion');
 }
 
 function fatal(e) {
   console.error(e);
-  quitToHome();
-  $('#homeError').textContent = (e && e.message) || 'Erreur inconnue';
+  const msg = (e && e.message) || 'Erreur inconnue';
+  if (G.online && G.isHost) {
+    resetPlay();
+    G.inGame = false;
+    G.players = G.players.filter(p => !p.offline);
+    G.view.lobby = { ...(G.view.lobby || {}), error: msg };
+    ui.screen('lobby');
+  } else {
+    leaveToHome(msg);
+  }
 }
-
-function quitToHome() {
-  G.gen++;
-  stopAllTimers(); hideToast(); hideOverlay();
-  G.round = null;
-  show('home');
-}
-
-/* ---------------- Home / setup ---------------- */
-const Setup = {
-  names: [],
-  load() {
-    try { this.names = JSON.parse(localStorage.getItem('aqc-names')) || []; } catch (e) { this.names = []; }
-    if (this.names.length < 2) this.names = ['Joueur 1', 'Joueur 2'];
-    const s = JSON.parse(localStorage.getItem('aqc-settings') || '{}');
-    if (s.difficulty) $('#difficulty').value = s.difficulty;
-    if (s.target) $('#finalTarget').value = s.target;
-    this.render();
-  },
-  render() {
-    $('#playerInputs').innerHTML = this.names.map((n, i) => `
-      <div class="pinput" style="--c:${COLORS[i]}">
-        <kbd>${KEYS[i].toUpperCase()}</kbd>
-        <input data-i="${i}" value="${esc(n)}" maxlength="16" />
-        ${this.names.length > 2 ? `<button class="btn ghost small" data-rm="${i}" title="Retirer">✕</button>` : ''}
-      </div>`).join('');
-    $$('#playerInputs input').forEach(inp => { inp.oninput = () => { this.names[+inp.dataset.i] = inp.value; }; });
-    $$('#playerInputs [data-rm]').forEach(b => { b.onclick = () => { this.names.splice(+b.dataset.rm, 1); this.render(); }; });
-    $('#addPlayer').style.display = this.names.length >= 4 ? 'none' : '';
-  },
-};
 
 async function startGame() {
-  $('#homeError').textContent = '';
-  const names = Setup.names.map((n, i) => (n || '').trim() || `Joueur ${i + 1}`);
+  if (!G.isHost) return;
   G.settings = { difficulty: $('#difficulty').value, target: +$('#finalTarget').value };
-  localStorage.setItem('aqc-names', JSON.stringify(names));
   localStorage.setItem('aqc-settings', JSON.stringify(G.settings));
-  G.players = names.map((name, i) => ({ id: i, name, color: COLORS[i], key: KEYS[i], eliminated: false, bonus: 0 }));
+  if (!G.online) {
+    const names = Setup.names.map((n, i) => (n || '').trim() || `Joueur ${i + 1}`);
+    localStorage.setItem('aqc-names', JSON.stringify(names));
+    G.players = names.map((name, i) => ({ id: i, name, color: COLORS[i], key: KEYS[i] }));
+  } else {
+    G.players = G.players.filter(p => !p.offline);
+    if (G.players.length < 2) { G.view.lobby.error = 'Il faut au moins 2 joueurs connectés.'; ui.screen('lobby'); return; }
+  }
+  G.players.forEach(p => Object.assign(p, { eliminated: false, bonus: 0, r1: 0, r2: null, r3: 0, qualified: false }));
+  G.inGame = true;
+  if (G.view.lobby) G.view.lobby.error = '';
+  resetPlay();
+  keepAwake();
 
   const gen = ++G.gen;
-  show('loading');
-  $('#loadingText').textContent = 'Chargement des animés depuis AniList…';
+  G.view.loading = 'Chargement des animés depuis AniList…';
+  ui.screen('loading');
   try {
     const pool = await API.loadPool(G.settings.difficulty);
     if (gen !== G.gen) return;
     G.bank = new QuestionBank(pool);
-    $('#loadingText').textContent = 'Préparation des images…';
+    G.view.loading = 'Préparation des images…';
+    touch();
     await G.bank.fill();
     if (gen !== G.gen) return;
-    G.bank.ready.slice(0, 2).forEach(q => q.images.forEach(i => preloadImage(i.url)));
+    ui.prefetch();
   } catch (e) {
     if (gen === G.gen) fatal(e);
     return;
@@ -785,25 +787,551 @@ async function startGame() {
   showIntro(Prelim);
 }
 
-/* ---------------- Keyboard ---------------- */
+function leaveToHome(error) {
+  G.gen++;
+  stopAllTimers();
+  G.round = null;
+  G.handlers = {};
+  G.inGame = false;
+  Net.close();
+  G.online = false; G.isHost = true; G.me = null;
+  G.view = freshView();
+  render(G.view);
+  showScreen('home');
+  $('#homeError').textContent = error || '';
+  releaseAwake();
+}
+
+/* ==========================================================
+   Rendering (every device)
+   ========================================================== */
+var seen = { flash: 0, sound: 0, toast: 0, screen: '' };
+let timerSnap = null;
+
+function showScreen(id) { $$('.screen').forEach(s => s.classList.toggle('active', s.id === id)); }
+function setHTML(el, html) { if (el._html !== html) { el._html = html; el.innerHTML = html; return true; } return false; }
+const vPlayer = (v, id) => v.players.find(p => p.id === id) || { name: '?', color: '#fff', key: '' };
+
+function render(v) {
+  if (!G.isHost) G.view = v;
+  if (v.screen !== 'home') showScreen(v.screen);
+  const fresh = seen.screen !== v.screen;
+  seen.screen = v.screen;
+  if (v.screen === 'lobby') renderLobby(v);
+  if (v.screen === 'loading') $('#loadingText').textContent = v.loading || 'Chargement…';
+  if (v.screen === 'intro') renderIntro(v);
+  if (v.screen === 'play') renderPlay(v);
+  if (v.screen === 'roundEnd') renderEnd(v);
+  if (v.screen === 'champion') { renderChamp(v); if (fresh) confetti(); }
+  if (fresh) {
+    const b = $('.screen.active [data-enter]');
+    if (b && !document.querySelector('.screen.active input')) setTimeout(() => b.focus({ preventScroll: true }), 50);
+  }
+  effects(v);
+}
+
+function effects(v) {
+  if (v.sound && v.sound.n > seen.sound) { seen.sound = v.sound.n; if (Sound[v.sound.name]) Sound[v.sound.name](); }
+  if (v.flash && v.flash.n > seen.flash) {
+    seen.flash = v.flash.n;
+    const g = $('#grid');
+    g.classList.remove('flash-good', 'flash-bad'); void g.offsetWidth; g.classList.add('flash-' + v.flash.kind);
+  }
+  if (v.toast && v.toast.n > seen.toast) {
+    seen.toast = v.toast.n;
+    if (v.toast.hide) hideToast();
+    else showToast(v.toast.html, { kind: v.toast.kind, ms: v.toast.ms, action: v.toast.action });
+  }
+  (v.prefetch || []).forEach(u => preloadImage(u));
+  timerSnap = v.timer ? { ...v.timer, at: performance.now() } : null;
+}
+
+function btnHTML(label, a, who, cls = 'btn primary big', waitFor) {
+  if (canDo(who)) return `<button class="${cls}" data-act="${a}" data-enter>${label}</button>`;
+  return `<p class="waiting">⏳ En attente de ${esc(waitFor || "l'hôte")}…</p>`;
+}
+
+function renderLobby(v) {
+  const L = v.lobby || {};
+  $('#lobbyCode').textContent = L.code || '';
+  setHTML($('#lobbyPlayers'), v.players.map(p =>
+    `<span class="chip" style="--c:${p.color}">${esc(p.name)}${p.id === G.me ? ' <small>(toi)</small>' : ''}${p.id === 0 ? ' 👑' : ''}</span>`).join(''));
+  const n = v.players.length;
+  $('#lobbyMsg').innerHTML = G.isHost
+    ? (n < 2 ? 'Envoie le code ou le lien à ton ami pour qu\'il te rejoigne.' : `${n} joueurs prêts. Lance quand tout le monde est là !`)
+    : 'Connecté ! En attente que l\'hôte lance la partie…';
+  $('#lobbyError').textContent = L.error || '';
+  const start = $('#lobbyStart');
+  start.style.display = G.isHost ? '' : 'none';
+  start.disabled = n < 2;
+}
+
+function chipsHTML(v, ids) {
+  return ids.map(id => {
+    const p = vPlayer(v, id);
+    return `<span class="chip" style="--c:${p.color}">${v.online ? '' : `<kbd>${p.key.toUpperCase()}</kbd>`}${esc(p.name)}${v.online && id === G.me ? ' <small>(toi)</small>' : ''}</span>`;
+  }).join('');
+}
+
+function renderIntro(v) {
+  const I = v.intro; if (!I) return;
+  $('#introStep').textContent = I.step;
+  $('#introTitle').textContent = I.title;
+  $('#introSubtitle').textContent = I.subtitle;
+  setHTML($('#introRules'), I.rules.map(r => `<li>${esc(r)}</li>`).join(''));
+  setHTML($('#introPlayers'), chipsHTML(v, I.ids));
+  setHTML($('#introAction'), btnHTML("C'est parti !", 'introGo', 'host'));
+}
+
+function renderEnd(v) {
+  const E = v.end; if (!E) return;
+  $('#endStep').textContent = E.step;
+  $('#endTitle').textContent = E.title;
+  setHTML($('#endTable'), E.rows.map((r, i) => {
+    const p = vPlayer(v, r.id);
+    return `<tr class="${r.elim ? 'elim' : ''}"><td>${i + 1}</td><td style="color:${p.color}"><b>${esc(p.name)}</b></td><td>${r.score}</td><td>${r.status}</td></tr>`;
+  }).join(''));
+  $('#endMsg').innerHTML = E.msg;
+  setHTML($('#endAction'), btnHTML(E.nextLabel, 'endNext', 'host'));
+}
+
+function renderChamp(v) {
+  const C = v.champ; if (!C) return;
+  const w = vPlayer(v, C.id);
+  $('#champName').textContent = w.name;
+  $('#champName').style.color = w.color;
+  $('#champScore').innerHTML = C.scores.map(s => `${esc(vPlayer(v, s.id).name)} : <b>${s.score}</b>`).join(' · ');
+  setHTML($('#champAction'),
+    (canDo('host') ? '<button class="btn primary big" data-act="replay" data-enter>Revanche !</button>' : '<p class="waiting">L\'hôte peut lancer une revanche…</p>') +
+    '<button class="btn ghost" data-act="home">Accueil</button>');
+}
+
+function renderPlay(v) {
+  setHTML($('#roundLabel'), v.roundLabel || '');
+  setHTML($('#qInfo'), v.qInfo || '');
+  setHTML($('#status'), v.status || '');
+  $('#skipBtn').style.display = v.canSkip && canDo('host') ? '' : 'none';
+
+  // scoreboard
+  setHTML($('#scoreboard'), v.scores.map(s => {
+    const p = vPlayer(v, s.id);
+    const cls = [...s.cls, v.online && s.id === G.me && 'me', p.offline && 'offline'].filter(Boolean).join(' ');
+    return `<button class="pcard ${cls}" data-act="cardbuzz" data-v="${s.id}" style="--c:${p.color}">
+        ${v.online ? '' : `<kbd>${esc(p.key.toUpperCase())}</kbd>`}
+        <span class="pname">${esc(p.name)}${v.online && s.id === G.me ? ' <small>(toi)</small>' : ''}</span>
+        <span class="pscore">${s.score}</span>
+        <span class="pbadge">${p.offline ? '📵 Déconnecté' : s.badge || ''}</span>
+      </button>`;
+  }).join(''));
+
+  // grid
+  const grid = v.grid;
+  $$('#grid .cell').forEach((cell, i) => {
+    const img = cell.querySelector('img');
+    if (grid && i < grid.revealed) {
+      const im = grid.images[i];
+      if (img.getAttribute('src') !== im.url) img.src = im.url;
+      cell.classList.toggle('scene', im.kind === 'scene');
+      cell.classList.add('shown');
+    } else {
+      cell.classList.remove('shown', 'scene');
+      img.removeAttribute('src');
+    }
+  });
+
+  // overlay
+  const o = v.overlay;
+  const ov = $('#overlay');
+  if (o) {
+    ov.classList.remove('hidden');
+    if (setHTML(ov, `<div class="overlay-card">${o.html}${btnHTML(o.btn.label, o.btn.a, o.btn.who, 'btn primary big', o.waitFor)}</div>`)) {
+      const b = ov.querySelector('[data-enter]'); if (b) setTimeout(() => b.focus({ preventScroll: true }), 50);
+    }
+  } else {
+    ov.classList.add('hidden'); setHTML(ov, '');
+  }
+
+  // answer area
+  const P = v.panel || {};
+  let html = '';
+  if (P.reveal) {
+    const r = P.reveal;
+    html += `<div class="reveal ${r.kind}">
+        ${r.cover ? `<img src="${esc(r.cover)}" alt="" />` : ''}
+        <div><div class="rmsg">${r.msg}</div><div class="rtitle">${esc(r.title)}</div>${r.sub ? `<div class="rsub">${esc(r.sub)}</div>` : ''}</div>
+      </div>`;
+    if (r.next) html += `<button id="nextBtn" class="btn primary" data-act="next" data-enter>${r.next.label} ▶</button>`;
+  }
+  if (P.streak != null) {
+    html += `<div class="streak">${[0, 1, 2, 3].map(i => `<span class="${i < P.streak ? 'on' : ''}"></span>`).join('')}<b>${P.streak}/4</b></div>`;
+  }
+  if (P.choices) {
+    const c = P.choices;
+    const mine = c.armed != null && (!v.online || c.armed === G.me);
+    html += `<div class="choices">${c.items.map((label, i) => {
+      const cls = ['choice', mine && 'armed', c.wrong.includes(i) && 'wrong', c.right === i && 'right'].filter(Boolean).join(' ');
+      const dis = c.wrong.includes(i) || c.right != null || (v.online && !mine);
+      return `<button class="${cls}" data-act="choice" data-v="${i}" ${dis ? 'disabled' : ''}><kbd>${i + 1}</kbd><span>${esc(label)}</span></button>`;
+    }).join('')}</div>`;
+  }
+  if (P.input) {
+    const inp = P.input;
+    if (canDo(inp.for) && !(v.online && G.isHost && inp.for !== G.me)) {
+      html += `<form id="ansForm" class="ans-form" autocomplete="off" data-key="${esc(inp.key)}">
+          <input id="ansInput" type="text" placeholder="${esc(inp.placeholder)}" spellcheck="false" autocapitalize="off" autocomplete="off" ${inp.enabled ? '' : 'disabled'} />
+          <button class="btn primary" type="submit" ${inp.enabled ? '' : 'disabled'}>Valider</button>
+          ${inp.pass ? `<button type="button" class="btn ghost" data-act="pass" ${inp.enabled ? '' : 'disabled'}>Passer</button>` : ''}
+        </form>`;
+    } else {
+      html += `<p class="waiting">✍️ <b style="color:${vPlayer(v, inp.for).color}">${esc(inp.name)}</b> est en train de répondre…</p>`;
+    }
+  }
+  if (setHTML($('#answerArea'), html)) {
+    const input = $('#ansInput');
+    if (input && !input.disabled) setTimeout(() => input.focus({ preventScroll: false }), 30);
+    else if ($('#nextBtn')) setTimeout(() => $('#nextBtn') && $('#nextBtn').focus({ preventScroll: true }), 30);
+  }
+
+  // big BUZZ button (online)
+  const bb = $('#buzzBtn');
+  const showBuzz = v.online && v.buzz.open && v.scores.some(s => s.id === G.me);
+  bb.classList.toggle('hidden', !showBuzz);
+  $('#play').classList.toggle('has-buzz', !!showBuzz);
+  if (showBuzz) {
+    const ok = v.buzz.ids.includes(G.me);
+    bb.disabled = !ok;
+    bb.textContent = ok ? 'BUZZ !' : 'Bloqué';
+    bb.style.setProperty('--c', vPlayer(v, G.me).color);
+  }
+}
+
+/* timer bar, animated locally on each device */
+(function timerLoop() {
+  const bar = $('#timerBar div'), label = $('#timerLabel');
+  let frac = 1, txt = '', cls = '';
+  const s = G.isHost && G.timerRef ? { ...G.timerRef.snapshot(), at: performance.now() } : timerSnap;
+  if (s) {
+    const left = s.running ? Math.max(0, s.left - (performance.now() - s.at)) : s.left;
+    frac = left / s.total;
+    cls = (s.mode === 'answer' ? 'answer ' : '') + (frac < 0.25 ? 'low' : '');
+    if (s.secs) txt = `⏱ ${Math.ceil(left / 1000)} s`;
+  }
+  bar.style.width = frac * 100 + '%';
+  if (bar.className !== cls) bar.className = cls;
+  if (label.textContent !== txt) label.textContent = txt;
+  requestAnimationFrame(timerLoop);
+})();
+
+let toastTimeout;
+function showToast(html, o = {}) {
+  const t = $('#toast');
+  clearTimeout(toastTimeout);
+  t.innerHTML = `<span>${html}</span>` + (o.action ? `<button class="btn small gold" data-act="override" data-v="${o.action.v}">${esc(o.action.label)}</button>` : '');
+  t.className = 'toast ' + (o.kind || '');
+  toastTimeout = setTimeout(hideToast, o.ms || 2200);
+}
+function hideToast() { clearTimeout(toastTimeout); $('#toast').className = 'toast hidden'; }
+
+/* ==========================================================
+   Online play (PeerJS / WebRTC). The host's peer id is "aqc-<CODE>".
+   ========================================================== */
+const Net = (() => {
+  const PREFIX = 'anime-quiz-champion-';
+  function options() {
+    const u = new URLSearchParams(location.search);
+    const o = { debug: 0 };
+    if (u.get('peerhost')) { // optional self-hosted PeerServer
+      o.host = u.get('peerhost'); o.port = +u.get('peerport') || 9000;
+      o.path = u.get('peerpath') || '/'; o.secure = u.get('peersecure') === '1';
+    }
+    return o;
+  }
+  function newCode() {
+    const A = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+    return [...Array(5)].map(() => A[(Math.random() * A.length) | 0]).join('');
+  }
+  function needLib() {
+    if (typeof Peer === 'undefined') throw new Error("Le module en ligne n'a pas pu se charger.");
+  }
+  function netError(e) {
+    const t = e && e.type;
+    if (t === 'peer-unavailable') return 'Salle introuvable : vérifie le code (et que l\'hôte est toujours sur la page).';
+    if (t === 'network' || t === 'server-error' || t === 'socket-error') return 'Problème de connexion au serveur de jeu. Vérifie ta connexion internet.';
+    if (t === 'browser-incompatible') return 'Ce navigateur ne permet pas de jouer en ligne.';
+    return 'Erreur de connexion' + (t ? ` (${t})` : '') + '.';
+  }
+
+  function host() {
+    needLib();
+    return new Promise((resolve, reject) => {
+      const code = newCode();
+      const peer = new Peer(PREFIX + code, options());
+      let opened = false;
+      peer.on('open', () => { opened = true; G.peer = peer; resolve(code); });
+      peer.on('error', e => {
+        if (!opened) {
+          peer.destroy();
+          if (e.type === 'unavailable-id') host().then(resolve, reject);
+          else reject(new Error(netError(e)));
+        } else console.warn('peer error', e.type);
+      });
+      peer.on('disconnected', () => { if (G.peer === peer && !peer.destroyed) setTimeout(() => { try { peer.reconnect(); } catch (e) { /* ignore */ } }, 1000); });
+      peer.on('connection', conn => onGuest(conn));
+    });
+  }
+
+  function onGuest(conn) {
+    conn.on('data', msg => {
+      if (!msg || typeof msg !== 'object') return;
+      if (msg.t === 'hello') {
+        const name = String(msg.name || '').trim().slice(0, 16) || 'Invité';
+        let p = G.players.find(x => x.offline && x.name.toLowerCase() === name.toLowerCase());
+        if (!p) {
+          if (G.inGame) return refuse(conn, 'La partie a déjà commencé. Attends la fin ou demande une nouvelle salle.');
+          if (G.players.length >= 4) return refuse(conn, 'La salle est pleine (4 joueurs max).');
+          const used = new Set(G.players.map(x => x.color));
+          p = { id: ++G.nextId, name, color: COLORS.find(c => !used.has(c)) || COLORS[0], key: '' };
+          if (G.players.some(x => x.name.toLowerCase() === name.toLowerCase())) p.name = name + ' ' + (G.players.length + 1);
+          G.players.push(p);
+        }
+        if (p.conn && p.conn !== conn) try { p.conn.close(); } catch (e) { /* ignore */ }
+        p.offline = false;
+        p.conn = conn;
+        conn.pid = p.id;
+        conn.send({ t: 'welcome', id: p.id });
+        G.view.n++;
+        touch();
+        if (!G.inGame) Sound.reveal();
+      } else if (msg.t === 'act' && conn.pid != null && byId(conn.pid) && byId(conn.pid).conn === conn) {
+        handleAction(conn.pid, msg.a, msg.v);
+      }
+    });
+    const gone = () => {
+      const p = G.players.find(x => x.conn === conn);
+      if (!p) return;
+      p.conn = null;
+      if (G.inGame) {
+        p.offline = true;
+        showToast(`📵 ${esc(p.name)} s'est déconnecté(e)`, { kind: 'bad', ms: 3000 });
+        if (G.round && G.round.scores) G.round.scores();
+      } else {
+        G.players = G.players.filter(x => x !== p);
+      }
+      touch();
+    };
+    conn.on('close', gone);
+    conn.on('error', gone);
+  }
+  function refuse(conn, msg) {
+    conn.send({ t: 'error', msg });
+    setTimeout(() => conn.close(), 800);
+  }
+
+  function join(code, name) {
+    needLib();
+    return new Promise((resolve, reject) => {
+      const peer = new Peer(options());
+      let done = false, welcomed = false;
+      const fail = m => {
+        if (done) return;
+        done = true; clearTimeout(to);
+        peer.destroy();
+        reject(new Error(m));
+      };
+      const to = setTimeout(() => fail('Impossible de rejoindre la salle (délai dépassé). Réessaie.'), 20000);
+      peer.on('error', e => { if (!done) fail(netError(e)); else console.warn('peer error', e.type); });
+      peer.on('open', () => {
+        const conn = peer.connect(PREFIX + code, { reliable: true });
+        conn.on('open', () => conn.send({ t: 'hello', name }));
+        conn.on('data', msg => {
+          if (!msg || typeof msg !== 'object') return;
+          if (msg.t === 'welcome') {
+            welcomed = true; done = true; clearTimeout(to);
+            G.peer = peer; G.hostConn = conn; G.me = msg.id;
+            resolve();
+          } else if (msg.t === 'error') {
+            fail(msg.msg);
+          } else if (msg.t === 'view' && welcomed) {
+            render(msg.view);
+          }
+        });
+        conn.on('close', () => { if (welcomed && G.hostConn === conn) leaveToHome('Connexion perdue avec l\'hôte.'); });
+      });
+    });
+  }
+
+  function broadcast(msg) {
+    G.players.forEach(p => { if (p.conn && p.conn.open) { try { p.conn.send(msg); } catch (e) { console.warn(e); } } });
+  }
+  function send(msg) { if (G.hostConn && G.hostConn.open) G.hostConn.send(msg); }
+  function close() {
+    const peer = G.peer;
+    G.peer = null; G.hostConn = null;
+    if (peer) try { peer.destroy(); } catch (e) { /* ignore */ }
+  }
+  return { host, join, broadcast, send, close };
+})();
+
+async function hostRoom() {
+  const name = $('#myName').value.trim();
+  if (!name) { $('#homeError').textContent = 'Choisis un pseudo !'; $('#myName').focus(); return; }
+  localStorage.setItem('aqc-me', name);
+  $('#homeError').textContent = '';
+  showScreen('loading'); $('#loadingText').textContent = 'Création de la salle…';
+  try {
+    const code = await Net.host();
+    G.online = true; G.isHost = true; G.me = 0; G.nextId = 0; G.inGame = false;
+    G.players = [{ id: 0, name, color: COLORS[0], key: '' }];
+    G.view = freshView();
+    G.view.lobby = { code, error: '' };
+    ui.screen('lobby');
+    history.replaceState(null, '', location.pathname);
+  } catch (e) {
+    leaveToHome(e.message);
+  }
+}
+
+async function joinRoom() {
+  const name = $('#myName').value.trim();
+  const code = $('#joinCode').value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!name) { $('#homeError').textContent = 'Choisis un pseudo !'; $('#myName').focus(); return; }
+  if (code.length !== 5) { $('#homeError').textContent = 'Le code de la salle fait 5 caractères.'; $('#joinCode').focus(); return; }
+  localStorage.setItem('aqc-me', name);
+  $('#homeError').textContent = '';
+  showScreen('loading'); $('#loadingText').textContent = 'Connexion à la salle ' + code + '…';
+  G.online = true; G.isHost = false;
+  G.view = freshView();
+  try {
+    await Net.join(code, name);
+    keepAwake();
+  } catch (e) {
+    leaveToHome(e.message);
+  }
+}
+
+function shareRoom() {
+  const code = G.view.lobby && G.view.lobby.code;
+  if (!code) return;
+  const url = location.origin + location.pathname + '?join=' + code;
+  const text = `Rejoins ma partie d'Anime Quiz Champion ! Code : ${code}`;
+  if (navigator.share) navigator.share({ title: 'Anime Quiz Champion', text, url }).catch(() => {});
+  else if (navigator.clipboard) navigator.clipboard.writeText(url).then(() => showToast('Lien copié ! Envoie-le à ton ami.', { kind: 'good' }));
+  else prompt('Copie ce lien :', url);
+}
+
+/* keep the phone screen on during a game */
+let wakeLock = null;
+async function keepAwake() {
+  try { if ('wakeLock' in navigator && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } } catch (e) { /* ignore */ }
+}
+function releaseAwake() { if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; } }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && G.inGame) keepAwake(); });
+
+/* ==========================================================
+   Input wiring
+   ========================================================== */
+document.addEventListener('click', e => {
+  const el = e.target.closest('[data-act]');
+  if (!el || el.disabled) return;
+  Sound.unlock();
+  const a = el.dataset.act;
+  const v = el.dataset.v != null && /^-?\d+$/.test(el.dataset.v) ? +el.dataset.v : el.dataset.v;
+  switch (a) {
+    case 'home':
+      if (!G.inGame || confirm('Quitter la partie ?')) leaveToHome();
+      break;
+    case 'quit':
+      if (confirm(G.online && G.isHost ? 'Quitter ? La partie s\'arrêtera pour tout le monde.' : 'Quitter la partie en cours ?')) leaveToHome();
+      break;
+    case 'share': shareRoom(); break;
+    case 'lobbyStart': startGame(); break;
+    case 'mybuzz': act('buzz', G.me); break;
+    case 'cardbuzz':
+      if (!G.online) act('buzz', v);
+      else if (v === G.me) act('buzz', v);
+      break;
+    case 'choice': {
+      const c = G.view.panel && G.view.panel.choices;
+      if (!G.online && c && c.armed == null) { showToast("Buzzez d'abord !"); break; }
+      act('choice', v);
+      break;
+    }
+    default: act(a, v);
+  }
+});
+
+document.addEventListener('submit', e => {
+  if (e.target.id !== 'ansForm') return;
+  e.preventDefault();
+  const value = $('#ansInput').value;
+  if (!value.trim()) return;
+  if (!G.isHost) { $('#ansInput').disabled = true; }
+  act('answer', value);
+});
+
 document.addEventListener('keydown', e => {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   const tag = e.target.tagName;
   if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
   const key = e.key.toLowerCase();
+  const screen = $('.screen.active');
+  if (!screen || screen.id === 'home') return;
 
+  if (key === ' ' && G.online && !$('#buzzBtn').classList.contains('hidden')) {
+    e.preventDefault();
+    if (!$('#buzzBtn').disabled) act('buzz', G.me);
+    return;
+  }
   if (key === 'enter' || key === ' ') {
-    const screen = $('.screen.active');
-    const btn = [...screen.querySelectorAll('[data-enter], #introGo, #endNext, #replaySame')]
-      .find(b => b.offsetParent !== null && !b.disabled);
+    const btn = [...screen.querySelectorAll('[data-enter]')].find(b => b.offsetParent !== null && !b.disabled);
     if (btn) { e.preventDefault(); btn.click(); }
     return;
   }
   if (e.repeat) return;
-  const idx = KEYS.indexOf(key);
-  if (idx >= 0 && G.round) { buzz(G.players[idx]); return; }
-  if (/^[1-4]$/.test(key) && G.round && G.round.onChoiceKey) G.round.onChoiceKey(+key);
+  if (!G.online) {
+    const idx = KEYS.indexOf(key);
+    if (idx >= 0 && G.players[idx]) { act('buzz', G.players[idx].id); return; }
+  }
+  if (/^[1-4]$/.test(key)) {
+    const b = $(`#answerArea .choice[data-v="${+key - 1}"]`);
+    if (b) b.click();
+  }
 });
+
+/* ---------------- Home / setup ---------------- */
+const Setup = {
+  names: [],
+  load() {
+    try { this.names = JSON.parse(localStorage.getItem('aqc-names')) || []; } catch (e) { this.names = []; }
+    if (this.names.length < 2) this.names = ['Joueur 1', 'Joueur 2'];
+    let s = {};
+    try { s = JSON.parse(localStorage.getItem('aqc-settings') || '{}'); } catch (e) { /* ignore */ }
+    if (s.difficulty) $('#difficulty').value = s.difficulty;
+    if (s.target) $('#finalTarget').value = s.target;
+    $('#myName').value = localStorage.getItem('aqc-me') || '';
+    const join = new URLSearchParams(location.search).get('join');
+    if (join) $('#joinCode').value = join.toUpperCase();
+    this.setMode(join ? 'online' : localStorage.getItem('aqc-mode') || 'online');
+    this.render();
+  },
+  setMode(mode) {
+    this.mode = mode;
+    localStorage.setItem('aqc-mode', mode);
+    $('#home').dataset.mode = mode;
+    $$('.mode-tabs .tab').forEach(t => t.classList.toggle('active', t.dataset.mode === mode));
+  },
+  render() {
+    $('#playerInputs').innerHTML = this.names.map((n, i) => `
+      <div class="pinput" style="--c:${COLORS[i]}">
+        <kbd>${KEYS[i].toUpperCase()}</kbd>
+        <input class="field" data-i="${i}" value="${esc(n)}" maxlength="16" />
+        ${this.names.length > 2 ? `<button class="btn ghost small" data-rm="${i}" title="Retirer">✕</button>` : ''}
+      </div>`).join('');
+    $$('#playerInputs input').forEach(inp => { inp.oninput = () => { this.names[+inp.dataset.i] = inp.value; }; });
+    $$('#playerInputs [data-rm]').forEach(b => { b.onclick = () => { this.names.splice(+b.dataset.rm, 1); this.render(); }; });
+    $('#addPlayer').style.display = this.names.length >= 4 ? 'none' : '';
+  },
+};
 
 /* ---------------- Confetti ---------------- */
 function confetti() {
@@ -831,10 +1359,11 @@ function confetti() {
 }
 
 /* ---------------- Wiring ---------------- */
+$$('.mode-tabs .tab').forEach(t => { t.onclick = () => { Setup.setMode(t.dataset.mode); $('#homeError').textContent = ''; }; });
 $('#addPlayer').onclick = () => { if (Setup.names.length < 4) { Setup.names.push(`Joueur ${Setup.names.length + 1}`); Setup.render(); } };
-$('#startBtn').onclick = startGame;
-$('#quitBtn').onclick = () => { if (confirm('Quitter la partie en cours ?')) quitToHome(); };
-$('#skipBtn').onclick = () => { if (G.round && G.round.skip) G.round.skip(); };
-$('#replaySame').onclick = startGame;
-$('#backHome').onclick = quitToHome;
+$('#startBtn').onclick = () => { Sound.unlock(); G.online = false; G.isHost = true; startGame(); };
+$('#hostBtn').onclick = () => { Sound.unlock(); hostRoom(); };
+$('#joinBtn').onclick = () => { Sound.unlock(); joinRoom(); };
+$('#joinCode').addEventListener('keydown', e => { if (e.key === 'Enter') joinRoom(); });
+window.addEventListener('beforeunload', e => { if (G.online && G.inGame) { e.preventDefault(); e.returnValue = ''; } });
 Setup.load();
