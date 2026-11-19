@@ -21,7 +21,7 @@ images are loaded live from the free [AniList](https://anilist.co) API.
 3. The others open the link (or type the code), pick a nickname, and tap **Rejoindre**.
 4. When everyone shows up in the room, the host taps **Lancer la partie**. Each phone gets its own big **BUZZ !** button.
 
-Up to 4 players. The host's phone runs the game, so keep the page open on it until the end.
+Up to 8 players. The host's phone runs the game, so keep the page open on it until the end.
 The phones connect directly to each other (WebRTC through [PeerJS](https://peerjs.com), whose free public server is used to find each other).
 
 ### 📺 Same screen: one device for everyone
@@ -34,7 +34,9 @@ The phones connect directly to each other (WebRTC through [PeerJS](https://peerj
 
 - Buzzers: online, each phone has its own big **BUZZ !** button. On one screen, each player has a buzzer at the bottom (or keys **A**, **P**, **V**, **M**).
 - A buzz stops the timer (and the music) for everyone. In the préliminaire, the 4 choices then appear only for the player who buzzed.
-- 2 to 4 players. With 3 or 4 players, the last one in each of the first two rounds is eliminated.
+- 2 to 8 players online (up to 4 on one screen). The préliminaire qualifies the first to reach 9 points:
+  2 players → straight to the final · 3 players → top 2 go to the final · 4 players → top 3 go to the demi-finale · 5 to 8 → top 4.
+  The demi-finale keeps the best 2 for the final.
 - Typed answers accept English or Japanese (romaji) titles, and small typos are allowed. If a correct answer is refused, click **« C'était bon ! »**.
 
 ## Hosting it online (optional)

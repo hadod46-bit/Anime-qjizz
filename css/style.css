@@ -434,3 +434,16 @@ select option { background: #1b1150; }
 .pick label:has(input:checked) { border-color: var(--gold); color: var(--text); background: rgba(255, 207, 63, 0.12); }
 #home:not([data-theme="hits"]) .hits-only { display: none; }
 #home[data-theme="hits"] .not-hits { display: none; }
+
+/* ================= Many players (5-8) ================= */
+.scoreboard.many { grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 6px; }
+.scoreboard.many .pcard { padding: 6px 9px; border-top-width: 4px; }
+.scoreboard.many .pname { font-size: 0.85rem; }
+.scoreboard.many .pscore { font-size: 1.25rem; }
+.scoreboard.many .pscore small { font-size: 0.7rem; }
+.scoreboard.many .pbadge { font-size: 0.7rem; }
+@media (max-width: 520px) {
+  .scoreboard.many { grid-template-columns: repeat(3, 1fr); }
+  .scoreboard.many .pcard { grid-template-columns: 1fr auto; grid-template-areas: "n s" "b b"; }
+  .scoreboard.many .pbadge:empty { display: none; }
+}

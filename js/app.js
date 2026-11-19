@@ -13,7 +13,12 @@ const $$ = s => [...document.querySelectorAll(s)];
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 const KEYS = ['a', 'p', 'v', 'm'];
-const COLORS = ['#ff4d6d', '#4dabff', '#ffd43b', '#69db7c'];
+const COLORS = ['#ff4d6d', '#4dabff', '#ffd43b', '#69db7c', '#b197fc', '#ff922b', '#22d3ee', '#f783ac'];
+const MAX_ONLINE = 8;   // players in an online room
+const MAX_LOCAL = 4;    // players on one screen (4 keyboard buzzers)
+/** How many players the préliminaire qualifies: 2 → both stay, 3 → 2 (straight to the final), 4 → 3, 5+ → 4. */
+const prelimQualifiers = n => (n <= 2 ? n : n === 3 ? 2 : n === 4 ? 3 : 4);
+const nameList = ps => ps.map(p => esc(p.name)).join(', ').replace(/, ([^,]*)$/, ' et $1');
 
 function freshView() {
   if (typeof seen !== 'undefined') { seen.flash = seen.sound = seen.toast = 0; seen.screen = ''; }
@@ -275,7 +280,9 @@ const Prelim = {
     ];
   },
   extraRules() {
-    return activePlayers().length >= 3 ? ['À ' + activePlayers().length + ' joueurs, le dernier non qualifié est éliminé.'] : [];
+    const n = activePlayers().length, q = prelimQualifiers(n);
+    if (n <= 2) return ['Le premier à 9 points gagne +1 point d\'avance, puis place directement à la finale !'];
+    return [`À ${n} joueurs : les ${q} premiers à 9 points sont qualifiés pour ${q === 2 ? 'la finale (pas de demi-finale)' : 'la demi-finale'}, les autres sont éliminés.`];
   },
 
   begin() {
@@ -404,24 +411,28 @@ const Prelim = {
   },
   stopTimers() { if (this.qTimer) this.qTimer.stop(); if (this.aTimer) this.aTimer.stop(); },
   isOver() {
-    const unq = this.players.filter(p => !p.qualified);
-    return this.players.length >= 3 ? unq.length <= 1 : unq.length < this.players.length;
+    const n = this.players.length;
+    const qualified = this.players.filter(p => p.qualified).length;
+    return n >= 3 ? qualified >= prelimQualifiers(n) : qualified >= 1;
   },
   end(reason) {
     this.stopTimers();
     this.state = 'done';
     const rest = this.players.filter(p => !p.qualified).sort((a, b) => b.r1 - a.r1);
     const ranking = [...this.order, ...rest];
-    let eliminated = null;
-    if (this.players.length >= 3) { eliminated = ranking[ranking.length - 1]; eliminated.eliminated = true; }
+    const n = this.players.length;
+    const out = n >= 3 ? ranking.slice(prelimQualifiers(n)) : [];
+    out.forEach(p => { p.eliminated = true; });
     const winner = ranking[0];
     winner.bonus += 1;
+    const toFinal = activePlayers().length <= 2;   // only 2 left: no demi-finale
     showRoundEnd({
       step: this.step, title: 'Résultats du préliminaire',
-      rows: ranking.map(p => [p, `${p.r1} pts`, p === eliminated ? '<span class="out">Éliminé(e)</span>' : p.qualified ? 'Qualifié(e) ✔' : 'Repêché(e)']),
+      rows: ranking.map(p => [p, `${p.r1} pts`, p.eliminated ? '<span class="out">Éliminé(e)</span>' : p.qualified ? 'Qualifié(e) ✔' : 'Repêché(e)']),
       msg: [reason, `${esc(winner.name)} gagne <b>+1 point</b> d'avance pour la finale.`,
-        eliminated ? `${esc(eliminated.name)} est éliminé(e). Merci d'avoir joué !` : ''].filter(Boolean).join('<br>'),
-      next: Semi,
+        out.length ? `${nameList(out)} ${out.length > 1 ? 'sont éliminés' : 'est éliminé(e)'}. Merci d'avoir joué !` : '',
+        toFinal ? 'Plus que 2 joueurs : <b>direction la finale !</b>' : ''].filter(Boolean).join('<br>'),
+      next: toFinal ? Final : Semi,
     });
   },
 };
@@ -445,7 +456,7 @@ const Semi = {
     ];
   },
   extraRules() {
-    return activePlayers().length > 2 ? ['Le dernier de la demi-finale est éliminé.'] : [];
+    return activePlayers().length > 2 ? ['Les 2 meilleurs vont en finale, les autres sont éliminés.'] : [];
   },
 
   begin() {
@@ -583,16 +594,16 @@ const Semi = {
     this.state = 'over';
     const ranking = this.players.slice().sort((a, b) =>
       (b.r2.best - a.r2.best) || (b.r2.timeLeft - a.r2.timeLeft) || (b.r2.correct - a.r2.correct));
-    let eliminated = null;
-    if (ranking.length > 2) { eliminated = ranking[ranking.length - 1]; eliminated.eliminated = true; }
+    const out = ranking.slice(2);
+    out.forEach(p => { p.eliminated = true; });
     const winner = ranking[0];
     winner.bonus += 2;
     this.cur = null;
     showRoundEnd({
       step: this.step, title: 'Résultats de la demi-finale',
-      rows: ranking.map(p => [p, `série ${p.r2.best}/4 · ${p.r2.correct} ✔`, p === eliminated ? '<span class="out">Éliminé(e)</span>' : 'Finaliste ✔']),
+      rows: ranking.map(p => [p, `série ${p.r2.best}/4 · ${p.r2.correct} ✔`, p.eliminated ? '<span class="out">Éliminé(e)</span>' : 'Finaliste ✔']),
       msg: [`${esc(winner.name)} gagne <b>+2 points</b> d'avance pour la finale.`,
-        eliminated ? `${esc(eliminated.name)} est éliminé(e).` : ''].filter(Boolean).join('<br>'),
+        out.length ? `${nameList(out)} ${out.length > 1 ? 'sont éliminés' : 'est éliminé(e)'}.` : ''].filter(Boolean).join('<br>'),
       next: Final,
     });
   },
@@ -951,7 +962,7 @@ function renderLobby(v) {
     `<span class="chip" style="--c:${p.color}">${esc(p.name)}${p.id === G.me ? ' <small>(toi)</small>' : ''}${p.id === 0 ? ' 👑' : ''}</span>`).join(''));
   const n = v.players.length;
   $('#lobbyMsg').innerHTML = G.isHost
-    ? (n < 2 ? 'Envoie le code ou le lien à ton ami pour qu\'il te rejoigne.' : `${n} joueurs prêts. Lance quand tout le monde est là !`)
+    ? (n < 2 ? 'Envoie le code ou le lien à ton ami pour qu\'il te rejoigne.' : `${n} / ${MAX_ONLINE} joueurs. Lance quand tout le monde est là !`)
     : 'Connecté ! En attente que l\'hôte lance la partie…';
   $('#lobbyError').textContent = L.error || '';
   $('#lobbyQuiz').textContent = L.quiz ? `${L.quiz} · ${L.diff}` : '';
@@ -1007,6 +1018,7 @@ function renderPlay(v) {
   $('#skipBtn').style.display = v.canSkip && canDo('host') ? '' : 'none';
 
   // scoreboard
+  $('#scoreboard').classList.toggle('many', v.scores.length > 4);
   setHTML($('#scoreboard'), v.scores.map(s => {
     const p = vPlayer(v, s.id);
     const cls = [...s.cls, v.online && s.id === G.me && 'me', p.offline && 'offline'].filter(Boolean).join(' ');
@@ -1279,7 +1291,7 @@ const Net = (() => {
         let p = G.players.find(x => x.offline && x.name.toLowerCase() === name.toLowerCase());
         if (!p) {
           if (G.inGame) return refuse(conn, 'La partie a déjà commencé. Attends la fin ou demande une nouvelle salle.');
-          if (G.players.length >= 4) return refuse(conn, 'La salle est pleine (4 joueurs max).');
+          if (G.players.length >= MAX_ONLINE) return refuse(conn, `La salle est pleine (${MAX_ONLINE} joueurs max).`);
           const used = new Set(G.players.map(x => x.color));
           p = { id: ++G.nextId, name, color: COLORS.find(c => !used.has(c)) || COLORS[0], key: '' };
           if (G.players.some(x => x.name.toLowerCase() === name.toLowerCase())) p.name = name + ' ' + (G.players.length + 1);
@@ -1536,7 +1548,7 @@ const Setup = {
       </div>`).join('');
     $$('#playerInputs input').forEach(inp => { inp.oninput = () => { this.names[+inp.dataset.i] = inp.value; }; });
     $$('#playerInputs [data-rm]').forEach(b => { b.onclick = () => { this.names.splice(+b.dataset.rm, 1); this.render(); }; });
-    $('#addPlayer').style.display = this.names.length >= 4 ? 'none' : '';
+    $('#addPlayer').style.display = this.names.length >= MAX_LOCAL ? 'none' : '';
   },
 };
 
@@ -1568,7 +1580,7 @@ function confetti() {
 /* ---------------- Wiring ---------------- */
 $('#theme').addEventListener('change', () => Setup.applyTheme());
 $$('.mode-tabs .tab').forEach(t => { t.onclick = () => { Setup.setMode(t.dataset.mode); $('#homeError').textContent = ''; }; });
-$('#addPlayer').onclick = () => { if (Setup.names.length < 4) { Setup.names.push(`Joueur ${Setup.names.length + 1}`); Setup.render(); } };
+$('#addPlayer').onclick = () => { if (Setup.names.length < MAX_LOCAL) { Setup.names.push(`Joueur ${Setup.names.length + 1}`); Setup.render(); } };
 $('#startBtn').onclick = () => { Sound.unlock(); Player.unlock(); G.online = false; G.isHost = true; startGame(); };
 $('#hostBtn').onclick = () => { Sound.unlock(); Player.unlock(); hostRoom(); };
 $('#joinBtn').onclick = () => { Sound.unlock(); Player.unlock(); joinRoom(); };
