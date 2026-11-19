@@ -268,3 +268,134 @@ const Match = (() => {
 
   return { norm, baseTitle, isCorrect };
 })();
+
+/* ==========================================================
+   Music mode: openings / endings from AnimeThemes.moe
+   ========================================================== */
+const Themes = (() => {
+  const ENDPOINT = 'https://api.animethemes.moe/anime';
+
+  async function get(url, tries = 3) {
+    let last = 'AnimeThemes ne répond pas.';
+    for (let i = 0; i < tries; i++) {
+      try {
+        const res = await fetch(url, { headers: { Accept: 'application/json' } });
+        if (res.status === 429) { last = 'Trop de requêtes vers AnimeThemes.'; await sleep(5000); continue; }
+        if (!res.ok) { last = 'Erreur AnimeThemes : ' + res.status; await sleep(1500); continue; }
+        return await res.json();
+      } catch (e) {
+        last = 'Impossible de joindre AnimeThemes (connexion internet ?)';
+        await sleep(2000 * (i + 1));
+      }
+    }
+    throw new Error(last);
+  }
+
+  function query(ids) {
+    const p = new URLSearchParams();
+    p.set('filter[has]', 'resources');
+    p.set('filter[site]', 'AniList');
+    p.set('filter[external_id]', ids.join(','));
+    p.set('include', 'animethemes.animethemeentries.videos.audio,animethemes.song,resources');
+    p.set('page[size]', String(Math.max(15, ids.length * 2)));
+    return ENDPOINT + '?' + p.toString();
+  }
+
+  /** Returns Map(anilistId -> [themes]) where theme = {type, seq, song, url, fallback} */
+  async function load(ids) {
+    const map = new Map();
+    let json = await get(query(ids));
+    let list = (json && json.anime) || [];
+    // If the multi-id filter isn't honoured, fall back to one request per id
+    if (!list.length && ids.length > 1) {
+      for (const id of ids) {
+        try { const j = await get(query([id]), 2); list.push(...((j && j.anime) || [])); } catch (e) { /* skip */ }
+      }
+    }
+    for (const a of list) {
+      const res = (a.resources || []).find(r => String(r.site).toLowerCase() === 'anilist');
+      const id = res && +res.external_id;
+      if (!id || !ids.includes(id)) continue;
+      const themes = (a.animethemes || [])
+        .filter(t => t.type === 'OP' || t.type === 'ED')
+        .map(t => {
+          const entries = (t.animethemeentries || []).filter(e => e.videos && e.videos.length);
+          const e = entries.find(x => !x.nsfw && !x.spoiler) || entries[0];
+          if (!e) return null;
+          const v = e.videos[0];
+          const url = (v.audio && v.audio.link) || v.link;
+          if (!url) return null;
+          return { type: t.type, seq: t.sequence || 1, song: t.song && t.song.title, url, fallback: v.link && v.link !== url ? v.link : null };
+        })
+        .filter(Boolean);
+      if (themes.length) map.set(id, (map.get(id) || []).concat(themes));
+    }
+    return map;
+  }
+  return { load };
+})();
+
+/** Tries to load an audio file; resolves true when it can play. */
+function probeAudio(url, timeout = 10000) {
+  return new Promise(resolve => {
+    const a = new Audio();
+    a.preload = 'auto';
+    let done = false;
+    const fin = v => {
+      if (done) return; done = true; clearTimeout(t);
+      a.oncanplay = a.onerror = null;
+      resolve(v);
+    };
+    const t = setTimeout(() => fin(a.readyState >= 2), timeout);
+    a.oncanplay = () => fin(true);
+    a.onerror = () => fin(false);
+    a.src = url;
+    a.load();
+  });
+}
+
+class MusicBank extends QuestionBank {
+  fill() {
+    if (this.filling) return this.filling;
+    this.filling = (async () => {
+      try {
+        let empty = 0;
+        while (this.ready.length < 3 && this.queue.length) {
+          const batch = this.queue.splice(0, 10);
+          const themes = await Themes.load(batch.map(m => m.id));
+          let added = 0;
+          for (const m of batch) {
+            const list = themes.get(m.id);
+            if (!list || !list.length) continue;
+            const ops = list.filter(t => t.type === 'OP');
+            const pick = ops.length && Math.random() < 0.75 ? ops[(Math.random() * ops.length) | 0] : list[(Math.random() * list.length) | 0];
+            this.ready.push({ media: m, audio: pick });
+            added++;
+          }
+          if (!added && ++empty >= 3) throw new Error("Impossible de trouver des musiques d'animés (AnimeThemes).");
+        }
+      } finally {
+        this.filling = null;
+      }
+    })();
+    return this.filling;
+  }
+
+  async next() {
+    for (let tries = 0; tries < 6; tries++) {
+      if (!this.ready.length) await this.fill();
+      const q = this.ready.shift();
+      if (!q) return null;
+      if (this.ready.length < 2) this.fill().catch(() => {});
+      let ok = await probeAudio(q.audio.url);
+      if (!ok && q.audio.fallback) {
+        ok = await probeAudio(q.audio.fallback);
+        if (ok) { q.audio.url = q.audio.fallback; q.audio.fallback = null; }
+      }
+      if (ok) return q;
+    }
+    throw new Error('Les musiques ne se chargent pas. Vérifie ta connexion.');
+  }
+
+  prefetchUrls() { return this.ready.slice(0, 1).map(q => q.audio.url); }
+}

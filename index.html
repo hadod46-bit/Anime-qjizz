@@ -14,7 +14,7 @@
   <section id="home" class="screen active">
     <div class="home-card">
       <h1 class="logo">Anime Quiz <span>Champion</span></h1>
-      <p class="tagline">4 images · 1 animé · 1 seul champion</p>
+      <p class="tagline">4 images ou 1 musique · 1 animé · 1 seul champion</p>
 
       <div class="mode-tabs">
         <button class="tab" data-mode="online">📱 En ligne<small>chacun son téléphone</small></button>
@@ -34,12 +34,17 @@
           <input id="joinCode" class="field code" maxlength="5" placeholder="Ex : K7PQ2" autocapitalize="characters" autocomplete="off" spellcheck="false" />
         </div>
         <div class="setup-block">
+          <h3>Type de quiz</h3>
+          <select id="theme" class="field">
+            <option value="images" data-short="🖼️ Quiz 4 images" selected>🖼️ 4 images — devine l'animé</option>
+            <option value="music" data-short="🎵 Quiz musique">🎵 Musique — devine l'opening / ending (+10 s)</option>
+          </select>
           <h3>Difficulté</h3>
           <select id="difficulty" class="field">
-            <option value="facile">Facile — Top 100 des animés</option>
-            <option value="moyen" selected>Moyen — Top 300</option>
-            <option value="difficile">Difficile — Top 800</option>
-            <option value="expert">Expert — Top 2000</option>
+            <option value="facile" data-short="Facile">Facile — Top 100 des animés</option>
+            <option value="moyen" data-short="Moyen" selected>Moyen — Top 300</option>
+            <option value="difficile" data-short="Difficile">Difficile — Top 800</option>
+            <option value="expert" data-short="Expert">Expert — Top 2000</option>
           </select>
           <h3>Finale</h3>
           <select id="finalTarget" class="field">
@@ -63,13 +68,14 @@
       <details class="rules">
         <summary>Les règles</summary>
         <ol>
-          <li><b>Préliminaire : 9 points gagnants.</b> Buzzez, puis choisissez parmi 4 réponses. Les questions valent 1, puis 2, puis 3 points. Le premier à 9 points se qualifie. À 3 ou 4 joueurs, le dernier est éliminé.</li>
+          <li><b>Préliminaire : 9 points gagnants.</b> Buzzez : le chrono s'arrête pour tout le monde et 4 propositions apparaissent pour vous. Les questions valent 1, puis 2, puis 3 points. Le premier à 9 points se qualifie. À 3 ou 4 joueurs, le dernier est éliminé.</li>
           <li><b>Demi-finale : 4 à la suite.</b> Chacun son tour, 60 secondes pour <i>taper</i> 4 bonnes réponses d'affilée. Une erreur ou un « passe » remet la série à zéro. Le score est la meilleure série.</li>
           <li><b>Finale : face à face.</b> Les images apparaissent une par une. Buzzez tôt : 4 pts avec 1 image, 3 pts avec 2, 2 pts avec 3, 1 pt avec 4. Le premier au score cible est sacré champion !</li>
           <li>Bonus : le 1<sup>er</sup> qualifié du préliminaire démarre la finale avec +1 point, le vainqueur de la demi-finale avec +2.</li>
         </ol>
         <p>📱 <b>En ligne :</b> un joueur crée la salle et envoie le code (ou le lien) aux autres. Chacun buzze avec le gros bouton de son téléphone.</p>
-        <p>📺 <b>Même écran :</b> buzzers <b>A</b> (J1), <b>P</b> (J2), <b>V</b> (J3), <b>M</b> (J4), ou touchez votre carte. Touches <b>1-4</b> pour le QCM, <b>Entrée</b> pour passer à la suite.</p>
+        <p>🎵 <b>Quiz musique :</b> un opening ou un ending passe à la place des images, avec 10 secondes de plus sur les chronos. Le buzz coupe la musique pour tout le monde.</p>
+        <p>📺 <b>Même écran :</b> chaque joueur a son buzzer en bas de l'écran (ou les touches <b>A</b>, <b>P</b>, <b>V</b>, <b>M</b>). Touches <b>1-4</b> pour le QCM, <b>Entrée</b> pour passer à la suite.</p>
         <p>Une réponse tapée a été refusée alors qu'elle était bonne ? Le bouton <b>« C'était bon ! »</b> permet de la valider.</p>
       </details>
     </div>
@@ -81,6 +87,7 @@
       <p class="intro-step">Salle en ligne</p>
       <p class="intro-sub">Code de la salle</p>
       <h2 id="lobbyCode" class="room-code"></h2>
+      <p id="lobbyQuiz" class="lobby-quiz"></p>
       <div class="row">
         <button class="btn small" data-act="share">🔗 Partager le lien</button>
       </div>
@@ -136,6 +143,7 @@
           <div class="cell"><span class="num">3</span><img alt="" /></div>
           <div class="cell"><span class="num">4</span><img alt="" /></div>
         </div>
+        <div id="musicStage" class="music-stage hidden"></div>
         <div id="overlay" class="overlay hidden"></div>
       </div>
 
@@ -146,6 +154,7 @@
       </div>
     </div>
     <button id="buzzBtn" class="buzz-btn hidden" data-act="mybuzz">BUZZ !</button>
+    <div id="buzzBar" class="buzz-bar hidden"></div>
   </section>
 
   <!-- ============ FIN DE MANCHE ============ -->

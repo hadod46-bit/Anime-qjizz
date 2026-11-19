@@ -20,8 +20,8 @@ function freshView() {
   return {
     screen: 'home', n: 0, players: [], online: false,
     scores: [], status: '', qInfo: '', roundLabel: '', canSkip: false,
-    timer: null, grid: null, panel: {}, overlay: null, buzz: { open: false, ids: [] },
-    toast: null, flash: null, sound: null, prefetch: [],
+    timer: null, grid: null, stage: null, music: null, panel: {}, overlay: null, buzz: { open: false, ids: [], show: false },
+    toast: null, flash: null, sound: null, prefetch: [], prefetchAudio: [],
     intro: null, end: null, champ: null, lobby: null, loading: '',
   };
 }
@@ -138,11 +138,49 @@ const ui = {
   panel(p) { G.view.panel = p || {}; touch(); },
   overlay(o) { G.view.overlay = o; touch(); },
   scores(list) { G.view.scores = list; touch(); },
-  buzz(open, ids) { G.view.buzz = { open: !!open, ids: ids || [] }; touch(); },
+  buzz(open, ids, show = true) { G.view.buzz = { open: !!open, ids: ids || [], show }; touch(); },
   timer(t, mode, secs) { G.timerRef = t; if (t) { t.mode = mode; t.showSecs = !!secs; } touch(); },
   prefetch() {
     if (!G.bank) return;
-    G.view.prefetch = G.bank.ready.slice(0, 2).flatMap(q => q.images.map(i => i.url));
+    if (G.bank instanceof MusicBank) { G.view.prefetch = []; G.view.prefetchAudio = G.bank.prefetchUrls(); }
+    else { G.view.prefetchAudio = []; G.view.prefetch = G.bank.ready.slice(0, 2).flatMap(q => q.images.map(i => i.url)); }
+    touch();
+  },
+};
+
+/* ---------- Music mode helpers (host) ---------- */
+const isMusic = () => G.settings.theme === 'music';
+const EXTRA = () => (isMusic() ? 10000 : 0);   // music quiz: +10 s on the clocks
+const themeLabel = a => `${a.type === 'OP' ? 'Opening' : 'Ending'}${a.seq > 1 ? ' ' + a.seq : ''}`;
+
+/** Shows the question: 4 images (images quiz) or the music stage (music quiz). */
+function showQ(q, revealed = 4, extra) {
+  if (!q) { G.view.grid = null; G.view.stage = null; touch(); return; }
+  if (q.audio) {
+    G.view.grid = null;
+    G.view.stage = Object.assign({ label: themeLabel(q.audio) }, extra || {});
+  } else {
+    G.view.stage = null;
+    G.view.grid = { images: q.images, revealed };
+  }
+  touch();
+}
+
+/** The song currently playing, as decided by the host. Every phone plays it in sync. */
+const Track = {
+  url: null, fallback: null, pos: 0, playing: false, since: 0,
+  load(q) {
+    this.url = q && q.audio ? q.audio.url : null;
+    this.fallback = q && q.audio ? q.audio.fallback : null;
+    this.pos = 0; this.playing = false;
+    this.sync();
+  },
+  now() { return this.pos + (this.playing ? (performance.now() - this.since) / 1000 : 0); },
+  play() { if (!this.url || this.playing) return; this.playing = true; this.since = performance.now(); this.sync(); },
+  pause() { if (!this.playing) return; this.pos = this.now(); this.playing = false; this.sync(); },
+  stop() { this.pause(); if (this.url) { this.url = null; this.sync(); } },
+  sync() {
+    G.view.music = this.url ? { url: this.url, fallback: this.fallback, playing: this.playing, pos: this.now(), n: ++G.view.n } : null;
     touch();
   },
 };
@@ -160,10 +198,15 @@ function canDo(who) {
   return who === G.me;
 }
 
-function revealObj(media, msg, kind, nextLabel) {
+function revealObj(q, msg, kind, nextLabel) {
+  const media = q.media;
+  if (q.audio && G.view.stage) {
+    G.view.stage = Object.assign({}, G.view.stage, { revealed: true, cover: (media.coverImage && (media.coverImage.extraLarge || media.coverImage.large)) || '', song: q.audio.song || '' });
+  }
   const romaji = media.title.romaji && media.title.romaji !== media.display ? media.title.romaji : '';
   const cover = (media.coverImage && (media.coverImage.large || media.coverImage.extraLarge)) || '';
-  return { msg, kind, title: media.display, sub: romaji, cover, next: nextLabel ? { label: nextLabel, who: 'any' } : null };
+  const song = q.audio ? `🎵 ${themeLabel(q.audio)}${q.audio.song ? ` · « ${esc(q.audio.song)} »` : ''}` : '';
+  return { msg, kind, title: media.display, sub: romaji, song, cover, next: nextLabel ? { label: nextLabel, who: 'any' } : null };
 }
 
 async function loadQuestion() {
@@ -217,13 +260,16 @@ const Prelim = {
   title: 'Préliminaire',
   subtitle: '9 points gagnants',
   canSkip: true,
-  rules: [
-    '4 images, 1 animé : buzzez dès que vous avez trouvé !',
-    'Après le buzz : 8 secondes pour choisir parmi 4 réponses.',
+  get rules() {
+    return [
+    isMusic() ? 'Un opening ou un ending passe : buzzez dès que vous reconnaissez l\'animé !' : '4 images, 1 animé : buzzez dès que vous avez trouvé !',
+    `${(20000 + EXTRA()) / 1000} secondes par question. Le buzz arrête le chrono${isMusic() ? ' et la musique' : ''} pour tout le monde.`,
+    'Après le buzz, 4 propositions apparaissent pour celui qui a buzzé : 8 secondes pour choisir.',
     'Questions 1-3 : 1 point · 4-6 : 2 points · ensuite : 3 points.',
     'Mauvaise réponse = vous êtes bloqué, les autres peuvent buzzer.',
     'Premier à 9 points = qualifié (et +1 point bonus en finale).',
-  ],
+    ];
+  },
   extraRules() {
     return activePlayers().length >= 3 ? ['À ' + activePlayers().length + ' joueurs, le dernier non qualifié est éliminé.'] : [];
   },
@@ -249,6 +295,7 @@ const Prelim = {
   },
   panel(reveal) {
     const q = this.q;
+    if (this.state !== 'answering' && this.state !== 'reveal') return ui.panel({});
     ui.panel({
       reveal,
       choices: {
@@ -266,7 +313,8 @@ const Prelim = {
     this.state = 'loading';
     this.buzzer = null;
     this.locked = new Set();
-    ui.panel({}); ui.grid(null); ui.timer(null);
+    Track.stop();
+    ui.panel({}); showQ(null); ui.timer(null);
     this.scores();
     const q = await loadQuestion();
     if (q === undefined) return;
@@ -276,13 +324,14 @@ const Prelim = {
     this.value = this.valueFor(this.qCount);
     this.wrongChoices = new Set();
     q.choices = shuffle([q.media, ...G.bank.distractors(q.media)]);
-    ui.grid(q, 4);
+    showQ(q, 4);
+    Track.load(q); Track.play();
     ui.qInfo(`Question ${this.qCount} · <b>${plural(this.value, 'point')}</b>`);
     this.state = 'open';
     this.panel();
     ui.status('Buzzez quand vous avez trouvé !');
     this.scores();
-    this.qTimer = new Timer(20000, () => this.timeUp()).start();
+    this.qTimer = new Timer(20000 + EXTRA(), () => this.timeUp()).start();
     ui.timer(this.qTimer, 'q');
   },
 
@@ -292,7 +341,8 @@ const Prelim = {
     this.state = 'answering';
     this.buzzer = p;
     this.qTimer.pause();
-    ui.status(`<b style="color:${p.color}">${esc(p.name)}</b> a buzzé ! Choix de la réponse…`);
+    Track.pause();
+    ui.status(`✋ <b style="color:${p.color}">${esc(p.name)}</b> a buzzé ! Choix de la réponse…`);
     this.aTimer = new Timer(8000, () => this.wrong(null)).start();
     ui.timer(this.aTimer, 'answer');
     this.panel(); this.scores();
@@ -311,9 +361,10 @@ const Prelim = {
     this.stopTimers();
     this.state = 'reveal';
     this.buzzer = null;
+    Track.play();
     const done = this.isOver();
     ui.status(p.qualified && !done ? `<b>${esc(p.name)}</b> est qualifié(e) !` : '');
-    this.panel(revealObj(this.q.media, `✔ ${esc(p.name)} +${plural(this.value, 'point')}`, 'good', done ? 'Résultats' : 'Question suivante'));
+    this.panel(revealObj(this.q, `✔ ${esc(p.name)} +${plural(this.value, 'point')}`, 'good', done ? 'Résultats' : 'Question suivante'));
     on('next', () => done ? this.end() : this.next());
     this.scores();
   },
@@ -328,6 +379,7 @@ const Prelim = {
       this.state = 'open';
       ui.status('Les autres peuvent encore buzzer !');
       this.qTimer.start();
+      Track.play();
       ui.timer(this.qTimer, 'q');
       this.panel(); this.scores();
     } else {
@@ -340,8 +392,9 @@ const Prelim = {
     this.stopTimers();
     this.state = 'reveal';
     this.buzzer = null;
+    Track.play();
     ui.status('');
-    this.panel(revealObj(this.q.media, msg, 'neutral', 'Question suivante'));
+    this.panel(revealObj(this.q, msg, 'neutral', 'Question suivante'));
     on('next', () => this.next());
     this.scores();
   },
@@ -377,13 +430,15 @@ const Semi = {
   title: 'Demi-finale',
   subtitle: '4 à la suite',
   canSkip: false,
-  rules: [
-    'Chacun son tour : 60 secondes au chrono.',
-    'Tape le nom de l\'animé (anglais ou japonais, les petites fautes passent).',
+  get rules() {
+    return [
+    `Chacun son tour : ${(60000 + EXTRA()) / 1000} secondes au chrono.`,
+    (isMusic() ? 'Une musique passe : tape' : 'Tape') + ' le nom de l\'animé (anglais ou japonais, les petites fautes passent).',
     'Objectif : 4 bonnes réponses d\'affilée. Erreur ou « Passer » = série remise à zéro.',
     'Classement : meilleure série, puis temps restant, puis nombre de bonnes réponses.',
     'Le vainqueur gagne +2 points d\'avance en finale.',
-  ],
+    ];
+  },
   extraRules() {
     return activePlayers().length > 2 ? ['Le dernier de la demi-finale est éliminé.'] : [];
   },
@@ -393,7 +448,7 @@ const Semi = {
     this.players.forEach(p => { p.r2 = { best: 0, streak: 0, correct: 0, timeLeft: 0, done: false }; });
     this.turn = -1;
     this.cur = null;
-    ui.buzz(false, []);
+    ui.buzz(false, [], false);
     this.nextTurn();
   },
   scores() {
@@ -422,12 +477,13 @@ const Semi = {
     this.cur = this.players[this.turn];
     this.state = 'intro';
     this.q = null;
-    ui.grid(null); ui.timer(null); ui.status(''); ui.panel({});
+    Track.stop();
+    showQ(null); ui.timer(null); ui.status(''); ui.panel({});
     ui.qInfo(`Joueur ${this.turn + 1} / ${this.players.length}`);
     this.scores();
     ui.overlay({
       html: `<h3 style="color:${this.cur.color}">${esc(this.cur.name)}</h3>
-        <p>60 secondes pour enchaîner <b>4 bonnes réponses</b> d'affilée.</p>
+        <p>${(60000 + EXTRA()) / 1000} secondes pour enchaîner <b>4 bonnes réponses</b> d'affilée.</p>
         <p class="small">Les autres : pas de souffle 🤫</p>`,
       btn: { label: 'Je suis prêt(e) !', a: 'ready', who: this.cur.id },
       waitFor: this.cur.name,
@@ -436,13 +492,14 @@ const Semi = {
   },
   startTurn() {
     ui.overlay(null);
-    this.chrono = new Timer(60000, () => this.timeUp());
+    this.chrono = new Timer(60000 + EXTRA(), () => this.timeUp());
     ui.timer(this.chrono, 'q', true);
     this.next();
   },
   async next() {
     this.state = 'loading';
     this.chrono.pause();
+    Track.stop();
     this.panel();
     const q = await loadQuestion();
     if (q === undefined) return;
@@ -450,7 +507,8 @@ const Semi = {
     if (q === null) return this.finishTurn('Plus de questions disponibles !');
     this.q = q;
     this.qKey = q.media.id;
-    ui.grid(q, 4);
+    showQ(q, 4);
+    Track.load(q); Track.play();
     ui.status(`Au tour de <b style="color:${this.cur.color}">${esc(this.cur.name)}</b> : quel est cet animé ?`);
     this.state = 'open';
     this.panel();
@@ -499,6 +557,7 @@ const Semi = {
     const pending = this.state === 'open' && this.q && !msg.startsWith('🔥') ? this.q.media : null;
     this.state = 'done';
     this.chrono.stop();
+    Track.stop();
     r.done = true;
     G.override = null;
     ui.hideToast();
@@ -544,8 +603,14 @@ const Final = {
   canSkip: true,
   get rules() {
     return [
-      'Les images apparaissent une par une, toutes les 5 secondes.',
-      'Buzz avec 1 image = 4 pts · 2 images = 3 pts · 3 images = 2 pts · 4 images = 1 pt.',
+      ...(isMusic() ? [
+        'La musique démarre : plus tu buzzes tôt, plus ça rapporte.',
+        '0-8 s = 4 pts · 8-16 s = 3 pts · 16-24 s = 2 pts · 24-33 s = 1 pt.',
+        'Le buzz arrête la musique et le chrono pour tout le monde.',
+      ] : [
+        'Les images apparaissent une par une, toutes les 5 secondes.',
+        'Buzz avec 1 image = 4 pts · 2 images = 3 pts · 3 images = 2 pts · 4 images = 1 pt.',
+      ]),
       'Après le buzz : 15 secondes pour taper la réponse.',
       'Mauvaise réponse = bloqué, l\'adversaire peut tenter sa chance.',
       `Le premier à ${G.settings.target} points est sacré champion !`,
@@ -584,7 +649,8 @@ const Final = {
     this.locked = new Set();
     this.awarded = false;
     G.override = null;
-    ui.panel({}); ui.grid(null); ui.timer(null);
+    Track.stop();
+    ui.panel({}); showQ(null); ui.timer(null);
     this.scores();
     const q = await loadQuestion();
     if (q === undefined) return;
@@ -602,10 +668,15 @@ const Final = {
   },
   revealNext() {
     this.revealed++;
-    ui.sound('reveal');
-    ui.grid(this.q, this.revealed);
+    if (this.q.audio) {
+      if (this.revealed === 1) { Track.load(this.q); Track.play(); }
+      showQ(this.q, 4, { value: this.value() });
+    } else {
+      ui.sound('reveal');
+      showQ(this.q, this.revealed);
+    }
     this.updateInfo();
-    const ms = this.revealed < 4 ? 5000 : 8000;
+    const ms = this.q.audio ? (this.revealed < 4 ? 8000 : 9000) : (this.revealed < 4 ? 5000 : 8000);
     this.step = new Timer(ms, () => {
       if (this.revealed < 4) this.revealNext();
       else this.reveal('⏱ Personne n\'a trouvé…');
@@ -613,7 +684,7 @@ const Final = {
     ui.timer(this.step, 'q');
   },
   updateInfo() {
-    ui.qInfo(`Question ${this.qCount} · ${plural(this.revealed, 'image')} · <b>${plural(this.value(), 'point')}</b>`);
+    ui.qInfo(`Question ${this.qCount} · ${this.q.audio ? '' : plural(this.revealed, 'image') + ' · '}<b>${plural(this.value(), 'point')}</b>`);
   },
   onBuzz(p) {
     if (this.state !== 'open' || !this.eligible(p)) return;
@@ -622,6 +693,7 @@ const Final = {
     this.buzzer = p;
     this.buzzValue = this.value();
     this.step.pause();
+    Track.pause();
     ui.status(`<b style="color:${p.color}">${esc(p.name)}</b> buzze pour <b>${plural(this.buzzValue, 'point')}</b> !`);
     ui.panel({ input: { for: p.id, name: p.name, placeholder: "Nom de l'animé…", pass: false, enabled: true, key: `f${this.qCount}-${p.id}` } });
     this.aTimer = new Timer(15000, () => this.answer('', null, true)).start();
@@ -649,6 +721,7 @@ const Final = {
       this.state = 'open';
       ui.status('À l\'adversaire de tenter sa chance !');
       this.step.start();
+      Track.play();
       ui.timer(this.step, 'q');
       this.scores();
     } else {
@@ -662,10 +735,11 @@ const Final = {
     this.buzzer = null;
     ui.sound('good'); ui.flash('good');
     p.r3 += v;
-    ui.grid(this.q, 4);
+    showQ(this.q, 4);
+    Track.play();
     ui.status('');
     const won = p.r3 >= this.target;
-    ui.panel({ reveal: revealObj(this.q.media, `✔ ${esc(p.name)} +${plural(v, 'point')}`, 'good', won ? '🏆 Voir le champion' : 'Question suivante') });
+    ui.panel({ reveal: revealObj(this.q, `✔ ${esc(p.name)} +${plural(v, 'point')}`, 'good', won ? '🏆 Voir le champion' : 'Question suivante') });
     on('next', () => won ? this.end(p) : this.next());
     this.scores();
   },
@@ -673,9 +747,10 @@ const Final = {
     this.stopTimers();
     this.state = 'reveal';
     this.buzzer = null;
-    ui.grid(this.q, 4);
+    showQ(this.q, 4);
+    Track.play();
     ui.status('');
-    ui.panel({ reveal: revealObj(this.q.media, msg, 'neutral', 'Question suivante') });
+    ui.panel({ reveal: revealObj(this.q, msg, 'neutral', 'Question suivante') });
     on('next', () => this.next());
     this.scores();
   },
@@ -693,10 +768,11 @@ const Final = {
    ========================================================== */
 function resetPlay() {
   stopAllTimers();
+  Track.stop();
   G.handlers = {};
   G.override = null;
   G.round = null;
-  Object.assign(G.view, { overlay: null, panel: {}, grid: null, status: '', qInfo: '', scores: [], buzz: { open: false, ids: [] } });
+  Object.assign(G.view, { overlay: null, panel: {}, grid: null, stage: null, status: '', qInfo: '', scores: [], buzz: { open: false, ids: [], show: false } });
   ui.hideToast();
 }
 
@@ -752,7 +828,7 @@ function fatal(e) {
 
 async function startGame() {
   if (!G.isHost) return;
-  G.settings = { difficulty: $('#difficulty').value, target: +$('#finalTarget').value };
+  G.settings = { difficulty: $('#difficulty').value, target: +$('#finalTarget').value, theme: $('#theme').value };
   localStorage.setItem('aqc-settings', JSON.stringify(G.settings));
   if (!G.online) {
     const names = Setup.names.map((n, i) => (n || '').trim() || `Joueur ${i + 1}`);
@@ -774,8 +850,8 @@ async function startGame() {
   try {
     const pool = await API.loadPool(G.settings.difficulty);
     if (gen !== G.gen) return;
-    G.bank = new QuestionBank(pool);
-    G.view.loading = 'Préparation des images…';
+    G.bank = isMusic() ? new MusicBank(pool) : new QuestionBank(pool);
+    G.view.loading = isMusic() ? 'Recherche des openings et endings…' : 'Préparation des images…';
     touch();
     await G.bank.fill();
     if (gen !== G.gen) return;
@@ -797,6 +873,7 @@ function leaveToHome(error) {
   G.online = false; G.isHost = true; G.me = null;
   G.view = freshView();
   render(G.view);
+  Player.apply(null);
   showScreen('home');
   $('#homeError').textContent = error || '';
   releaseAwake();
@@ -843,6 +920,8 @@ function effects(v) {
     else showToast(v.toast.html, { kind: v.toast.kind, ms: v.toast.ms, action: v.toast.action });
   }
   (v.prefetch || []).forEach(u => preloadImage(u));
+  (v.prefetchAudio || []).forEach(u => Player.prefetch(u));
+  Player.apply(v.screen === 'play' ? v.music : null);
   timerSnap = v.timer ? { ...v.timer, at: performance.now() } : null;
 }
 
@@ -861,6 +940,7 @@ function renderLobby(v) {
     ? (n < 2 ? 'Envoie le code ou le lien à ton ami pour qu\'il te rejoigne.' : `${n} joueurs prêts. Lance quand tout le monde est là !`)
     : 'Connecté ! En attente que l\'hôte lance la partie…';
   $('#lobbyError').textContent = L.error || '';
+  $('#lobbyQuiz').textContent = L.quiz ? `${L.quiz} · ${L.diff}` : '';
   const start = $('#lobbyStart');
   start.style.display = G.isHost ? '' : 'none';
   start.disabled = n < 2;
@@ -916,13 +996,30 @@ function renderPlay(v) {
   setHTML($('#scoreboard'), v.scores.map(s => {
     const p = vPlayer(v, s.id);
     const cls = [...s.cls, v.online && s.id === G.me && 'me', p.offline && 'offline'].filter(Boolean).join(' ');
-    return `<button class="pcard ${cls}" data-act="cardbuzz" data-v="${s.id}" style="--c:${p.color}">
+    return `<div class="pcard ${cls}" style="--c:${p.color}">
         ${v.online ? '' : `<kbd>${esc(p.key.toUpperCase())}</kbd>`}
         <span class="pname">${esc(p.name)}${v.online && s.id === G.me ? ' <small>(toi)</small>' : ''}</span>
         <span class="pscore">${s.score}</span>
         <span class="pbadge">${p.offline ? '📵 Déconnecté' : s.badge || ''}</span>
-      </button>`;
+      </div>`;
   }).join(''));
+
+  // music stage (music quiz) or image grid (images quiz)
+  const st = v.stage;
+  $('#grid').classList.toggle('hidden', !!st);
+  const ms = $('#musicStage');
+  ms.classList.toggle('hidden', !st);
+  if (st) {
+    const playing = !!(v.music && v.music.playing);
+    ms.classList.toggle('playing', playing);
+    ms.classList.toggle('revealed', !!st.revealed);
+    setHTML(ms, st.revealed
+      ? `<img class="ms-cover" src="${esc(st.cover)}" alt="" /><div class="ms-label">🎵 ${esc(st.label)}${st.song ? `<br><b>« ${esc(st.song)} »</b>` : ''}</div>`
+      : `<div class="eq">${'<span></span>'.repeat(9)}</div>
+         <div class="ms-label">🎵 ${esc(st.label)}</div>
+         ${st.value ? `<div class="ms-value">${[1, 2, 3, 4].map(i => `<span class="${i <= st.value ? 'on' : ''}"></span>`).join('')}<b>${st.value} pts</b></div>` : ''}
+         <button class="btn small ghost unmute ${Player.blocked ? '' : 'hidden'}" data-act="unmute">🔊 Activer le son</button>`);
+  }
 
   // grid
   const grid = v.grid;
@@ -958,14 +1055,17 @@ function renderPlay(v) {
     const r = P.reveal;
     html += `<div class="reveal ${r.kind}">
         ${r.cover ? `<img src="${esc(r.cover)}" alt="" />` : ''}
-        <div><div class="rmsg">${r.msg}</div><div class="rtitle">${esc(r.title)}</div>${r.sub ? `<div class="rsub">${esc(r.sub)}</div>` : ''}</div>
+        <div><div class="rmsg">${r.msg}</div><div class="rtitle">${esc(r.title)}</div>${r.sub ? `<div class="rsub">${esc(r.sub)}</div>` : ''}${r.song ? `<div class="rsong">${r.song}</div>` : ''}</div>
       </div>`;
     if (r.next) html += `<button id="nextBtn" class="btn primary" data-act="next" data-enter>${r.next.label} ▶</button>`;
   }
   if (P.streak != null) {
     html += `<div class="streak">${[0, 1, 2, 3].map(i => `<span class="${i < P.streak ? 'on' : ''}"></span>`).join('')}<b>${P.streak}/4</b></div>`;
   }
-  if (P.choices) {
+  if (P.choices && P.choices.armed != null && v.online && P.choices.armed !== G.me) {
+    const bp = vPlayer(v, P.choices.armed);
+    html += `<p class="waiting">✋ <b style="color:${bp.color}">${esc(bp.name)}</b> a buzzé et choisit sa réponse…</p>`;
+  } else if (P.choices) {
     const c = P.choices;
     const mine = c.armed != null && (!v.online || c.armed === G.me);
     html += `<div class="choices">${c.items.map((label, i) => {
@@ -992,18 +1092,95 @@ function renderPlay(v) {
     else if ($('#nextBtn')) setTimeout(() => $('#nextBtn') && $('#nextBtn').focus({ preventScroll: true }), 30);
   }
 
-  // big BUZZ button (online)
+  // Buzzers. Online: one big BUZZ button on each phone. Same screen: one buzzer per player.
+  const B = v.buzz || {};
+  const buzzerId = P.choices ? P.choices.armed : P.input ? P.input.for : null;
   const bb = $('#buzzBtn');
-  const showBuzz = v.online && v.buzz.open && v.scores.some(s => s.id === G.me);
+  // shown only while buzzing is possible, so it never hides the answers
+  const showBuzz = v.online && B.show && B.open && v.scores.some(s => s.id === G.me);
   bb.classList.toggle('hidden', !showBuzz);
-  $('#play').classList.toggle('has-buzz', !!showBuzz);
   if (showBuzz) {
-    const ok = v.buzz.ids.includes(G.me);
+    const ok = B.open && B.ids.includes(G.me);
     bb.disabled = !ok;
-    bb.textContent = ok ? 'BUZZ !' : 'Bloqué';
+    let label = 'BUZZ !';
+    if (!ok) {
+      if (buzzerId != null && !B.open) label = buzzerId === G.me ? '✋ À toi de répondre !' : `⏸ ${vPlayer(v, buzzerId).name} répond…`;
+      else if (B.open) label = '🔒 Bloqué';
+      else label = '…';
+    }
+    if (bb.textContent !== label) bb.textContent = label;
     bb.style.setProperty('--c', vPlayer(v, G.me).color);
   }
+  const bar = $('#buzzBar');
+  const showBar = !v.online && B.show;
+  bar.classList.toggle('hidden', !showBar);
+  if (showBar) {
+    setHTML(bar, v.scores.map(s => {
+      const p = vPlayer(v, s.id);
+      const ok = B.open && B.ids.includes(s.id);
+      const lbl = s.id === buzzerId && !B.open ? '✋' : ok ? 'BUZZ' : '🔒';
+      return `<button class="lbuzz" data-act="lbuzz" data-v="${s.id}" style="--c:${p.color}" ${ok ? '' : 'disabled'}>
+          <b>${lbl}</b><span>${esc(p.name)}</span><kbd>${esc(p.key.toUpperCase())}</kbd></button>`;
+    }).join(''));
+  }
+  $('#play').classList.toggle('has-buzz', !!(showBuzz || showBar));
 }
+
+/* ---------- Music player (every device) ---------- */
+const SILENT = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=';
+const Player = {
+  el: (() => { const a = new Audio(); a.preload = 'auto'; a.volume = 0.85; return a; })(),
+  n: -1, url: null, want: null, blocked: false, unlocked: false, pending: null, cache: new Map(),
+  unlock() {
+    if (this.unlocked) return;
+    this.unlocked = true;
+    if (!this.url) { this.el.src = SILENT; this.el.play().then(() => this.el.pause()).catch(() => {}); }
+  },
+  prefetch(url) {
+    if (this.cache.has(url) || url === this.url) return;
+    if (this.cache.size > 4) this.cache.clear();
+    const a = new Audio(); a.preload = 'auto'; a.src = url;
+    this.cache.set(url, a);
+  },
+  apply(m) {
+    const el = this.el;
+    if (!m) {
+      if (this.url) { el.pause(); el.removeAttribute('src'); el.load(); this.url = null; }
+      this.n = -1; this.want = null;
+      return;
+    }
+    if (m.n === this.n) return;
+    this.n = m.n; this.want = m;
+    if (m.url !== this.url) {
+      this.url = m.url; this.triedFallback = false;
+      el.src = m.url;
+      this.pending = m.pos;
+    }
+    this.seek(m.pos);
+    if (m.playing) this.play(); else el.pause();
+  },
+  seek(pos) {
+    const el = this.el;
+    if (el.readyState < 1) { this.pending = pos; return; }
+    if (Math.abs(el.currentTime - pos) > 0.8) { try { el.currentTime = pos; } catch (e) { /* ignore */ } }
+  },
+  play() {
+    this.el.play().then(() => { if (this.blocked) { this.blocked = false; render(G.view); } })
+      .catch(err => { if (err && err.name === 'NotAllowedError' && !this.blocked) { this.blocked = true; render(G.view); } });
+  },
+};
+Player.el.addEventListener('loadedmetadata', () => {
+  if (Player.pending != null) { const p = Player.pending; Player.pending = null; Player.seek(p); }
+});
+Player.el.addEventListener('error', () => {
+  const w = Player.want;
+  if (w && w.fallback && !Player.triedFallback && Player.url === w.url) {
+    Player.triedFallback = true;
+    Player.el.src = w.fallback;
+    Player.pending = w.pos;
+    if (w.playing) Player.play();
+  }
+});
 
 /* timer bar, animated locally on each device */
 (function timerLoop() {
@@ -1183,7 +1360,7 @@ async function hostRoom() {
     G.online = true; G.isHost = true; G.me = 0; G.nextId = 0; G.inGame = false;
     G.players = [{ id: 0, name, color: COLORS[0], key: '' }];
     G.view = freshView();
-    G.view.lobby = { code, error: '' };
+    G.view.lobby = { code, error: '', quiz: $('#theme').selectedOptions[0].dataset.short, diff: $('#difficulty').selectedOptions[0].dataset.short };
     ui.screen('lobby');
     history.replaceState(null, '', location.pathname);
   } catch (e) {
@@ -1234,6 +1411,7 @@ document.addEventListener('click', e => {
   const el = e.target.closest('[data-act]');
   if (!el || el.disabled) return;
   Sound.unlock();
+  Player.unlock();
   const a = el.dataset.act;
   const v = el.dataset.v != null && /^-?\d+$/.test(el.dataset.v) ? +el.dataset.v : el.dataset.v;
   switch (a) {
@@ -1246,10 +1424,8 @@ document.addEventListener('click', e => {
     case 'share': shareRoom(); break;
     case 'lobbyStart': startGame(); break;
     case 'mybuzz': act('buzz', G.me); break;
-    case 'cardbuzz':
-      if (!G.online) act('buzz', v);
-      else if (v === G.me) act('buzz', v);
-      break;
+    case 'lbuzz': if (!G.online) act('buzz', v); break;
+    case 'unmute': Player.blocked = false; Player.play(); render(G.view); break;
     case 'choice': {
       const c = G.view.panel && G.view.panel.choices;
       if (!G.online && c && c.armed == null) { showToast("Buzzez d'abord !"); break; }
@@ -1308,6 +1484,7 @@ const Setup = {
     try { s = JSON.parse(localStorage.getItem('aqc-settings') || '{}'); } catch (e) { /* ignore */ }
     if (s.difficulty) $('#difficulty').value = s.difficulty;
     if (s.target) $('#finalTarget').value = s.target;
+    if (s.theme) $('#theme').value = s.theme;
     $('#myName').value = localStorage.getItem('aqc-me') || '';
     const join = new URLSearchParams(location.search).get('join');
     if (join) $('#joinCode').value = join.toUpperCase();
@@ -1361,9 +1538,9 @@ function confetti() {
 /* ---------------- Wiring ---------------- */
 $$('.mode-tabs .tab').forEach(t => { t.onclick = () => { Setup.setMode(t.dataset.mode); $('#homeError').textContent = ''; }; });
 $('#addPlayer').onclick = () => { if (Setup.names.length < 4) { Setup.names.push(`Joueur ${Setup.names.length + 1}`); Setup.render(); } };
-$('#startBtn').onclick = () => { Sound.unlock(); G.online = false; G.isHost = true; startGame(); };
-$('#hostBtn').onclick = () => { Sound.unlock(); hostRoom(); };
-$('#joinBtn').onclick = () => { Sound.unlock(); joinRoom(); };
+$('#startBtn').onclick = () => { Sound.unlock(); Player.unlock(); G.online = false; G.isHost = true; startGame(); };
+$('#hostBtn').onclick = () => { Sound.unlock(); Player.unlock(); hostRoom(); };
+$('#joinBtn').onclick = () => { Sound.unlock(); Player.unlock(); joinRoom(); };
 $('#joinCode').addEventListener('keydown', e => { if (e.key === 'Enter') joinRoom(); });
 window.addEventListener('beforeunload', e => { if (G.online && G.inGame) { e.preventDefault(); e.returnValue = ''; } });
 Setup.load();

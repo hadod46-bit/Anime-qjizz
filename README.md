@@ -1,11 +1,16 @@
 # Anime Quiz Champion 🏆
 
-**4 images, 1 animé**: a party quiz to play with friends on one screen, structured like a TV quiz show
+**4 images or 1 song, 1 animé**: a party quiz to play with friends on one screen, structured like a TV quiz show
 (Préliminaire → Demi-finale → Finale).
 
 ## How to play
 Open the site (or `index.html`) in a browser. There is nothing to install, but you need an internet connection: anime and
 images are loaded live from the free [AniList](https://anilist.co) API.
+
+### 🖼️ / 🎵 Two quizzes
+- **4 images:** 4 random pictures of an anime (characters and scenes).
+- **Musique:** an opening or ending plays (from [AnimeThemes.moe](https://animethemes.moe)). Every timer gets **+10 seconds**.
+  A buzz pauses the music and the timer for everyone.
 
 ### 📱 Online: each player on their own phone
 1. Player 1 picks a nickname and taps **Créer une salle**. A 5-letter code appears.
@@ -24,7 +29,8 @@ The phones connect directly to each other (WebRTC through [PeerJS](https://peerj
 | **2. Demi-finale: 4 à la suite** | Solo turns, 60 s on the clock. Type the anime's name. Get 4 right in a row; a mistake resets the streak. |
 | **3. Finale: face à face** | Images appear one at a time. Buzz early for more points (4/3/2/1). First to 12 (or 15/20) wins. |
 
-- Buzzers: **A** (player 1), **P** (player 2), **V** (player 3), **M** (player 4), or tap your player card.
+- Buzzers: online, each phone has its own big **BUZZ !** button. On one screen, each player has a buzzer at the bottom (or keys **A**, **P**, **V**, **M**).
+- A buzz stops the timer (and the music) for everyone. In the préliminaire, the 4 choices then appear only for the player who buzzed.
 - 2 to 4 players. With 3 or 4 players, the last one in each of the first two rounds is eliminated.
 - Typed answers accept English or Japanese (romaji) titles, and small typos are allowed. If a correct answer is refused, click **« C'était bon ! »**.
 
