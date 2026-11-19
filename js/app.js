@@ -25,7 +25,7 @@ function freshView() {
   return {
     screen: 'home', n: 0, players: [], online: false,
     scores: [], status: '', qInfo: '', roundLabel: '', canSkip: false,
-    timer: null, grid: null, stage: null, music: null, panel: {}, overlay: null, buzz: { open: false, ids: [], show: false },
+    timer: null, grid: null, stage: null, logo: null, music: null, panel: {}, overlay: null, buzz: { open: false, ids: [], show: false },
     toast: null, flash: null, sound: null, prefetch: [], prefetchAudio: [],
     intro: null, end: null, champ: null, lobby: null, loading: '',
   };
@@ -156,18 +156,20 @@ const ui = {
 /* ---------- Music mode helpers (host) ---------- */
 const isMusic = () => G.settings.theme === 'music' || G.settings.theme === 'hits';
 const isHits = () => G.settings.theme === 'hits';
-const answerHint = () => (isHits() ? 'Titre ou artiste…' : "Nom de l'animé…");
+const isLogos = () => G.settings.theme === 'logos';
+const answerHint = () => (isHits() ? 'Titre ou artiste…' : isLogos() ? 'Nom de la marque…' : "Nom de l'animé…");
 const EXTRA = () => (isMusic() ? 10000 : 0);   // music quiz: +10 s on the clocks
 const themeLabel = a => a.label || `${a.type === 'OP' ? 'Opening' : 'Ending'}${a.seq > 1 ? ' ' + a.seq : ''}`;
 
 /** Shows the question: 4 images (images quiz) or the music stage (music quiz). */
 function showQ(q, revealed = 4, extra) {
-  if (!q) { G.view.grid = null; G.view.stage = null; touch(); return; }
+  if (!q) { G.view.grid = null; G.view.stage = null; G.view.logo = null; touch(); return; }
+  G.view.grid = null; G.view.stage = null; G.view.logo = null;
   if (q.audio) {
-    G.view.grid = null;
     G.view.stage = Object.assign({ label: themeLabel(q.audio) }, extra || {});
+  } else if (q.logo) {
+    G.view.logo = { p: q.logo.p, h: q.logo.h, dark: q.logo.dark, level: revealed };   // level 1 = very blurry … 4 = sharp
   } else {
-    G.view.stage = null;
     G.view.grid = { images: q.images, revealed };
   }
   touch();
@@ -213,7 +215,8 @@ function revealObj(q, msg, kind, nextLabel) {
   const romaji = media.title.romaji && media.title.romaji !== media.display ? media.title.romaji : '';
   const cover = (media.coverImage && (media.coverImage.large || media.coverImage.extraLarge)) || '';
   const song = media.year ? `📅 ${media.year} · ${esc(media.styleLabel || '')}`
-    : q.audio ? `🎵 ${themeLabel(q.audio)}${q.audio.song ? ` · « ${esc(q.audio.song)} »` : ''}` : '';
+    : q.audio ? `🎵 ${themeLabel(q.audio)}${q.audio.song ? ` · « ${esc(q.audio.song)} »` : ''}`
+    : media.catLabel ? `🏷️ ${esc(media.catLabel)}` : '';
   return { msg, kind, title: media.display, sub: romaji, song, cover, next: nextLabel ? { label: nextLabel, who: 'any' } : null };
 }
 
@@ -270,7 +273,8 @@ const Prelim = {
   canSkip: true,
   get rules() {
     return [
-    isHits() ? 'Une chanson passe : buzzez dès que vous la reconnaissez !'
+    isLogos() ? 'Un logo apparaît flou et devient net petit à petit : buzzez dès que vous reconnaissez la marque !'
+      : isHits() ? 'Une chanson passe : buzzez dès que vous la reconnaissez !'
       : isMusic() ? 'Un opening ou un ending passe : buzzez dès que vous reconnaissez l\'animé !' : '4 images, 1 animé : buzzez dès que vous avez trouvé !',
     `${(20000 + EXTRA()) / 1000} secondes par question. Le buzz arrête le chrono${isMusic() ? ' et la musique' : ''} pour tout le monde.`,
     'Après le buzz, 4 propositions apparaissent pour celui qui a buzzé : 8 secondes pour choisir.',
@@ -335,7 +339,8 @@ const Prelim = {
     this.value = this.valueFor(this.qCount);
     this.wrongChoices = new Set();
     q.choices = shuffle([q.media, ...G.bank.distractors(q.media)]);
-    showQ(q, 4);
+    this.lvTimer = null;
+    if (q.logo) this.logoStep(1); else showQ(q, 4);
     Track.load(q); Track.play();
     ui.qInfo(`Question ${this.qCount} · <b>${plural(this.value, 'point')}</b>`);
     this.state = 'open';
@@ -346,12 +351,18 @@ const Prelim = {
     ui.timer(this.qTimer, 'q');
   },
 
+  /** Logo quiz: the logo gets sharper every 5 seconds (paused while someone answers). */
+  logoStep(level) {
+    showQ(this.q, level);
+    if (level < 4) this.lvTimer = new Timer(5000, () => { if (this.state === 'open') this.logoStep(level + 1); }).start();
+  },
   onBuzz(p) {
     if (this.state !== 'open' || !this.eligible(p)) return;
     ui.sound('buzz');
     this.state = 'answering';
     this.buzzer = p;
     this.qTimer.pause();
+    if (this.lvTimer) this.lvTimer.pause();
     Track.pause();
     ui.status(`✋ <b style="color:${p.color}">${esc(p.name)}</b> a buzzé ! Choix de la réponse…`);
     this.aTimer = new Timer(8000, () => this.wrong(null)).start();
@@ -373,6 +384,7 @@ const Prelim = {
     this.state = 'reveal';
     this.buzzer = null;
     Track.play();
+    if (this.q.logo) showQ(this.q, 4);
     const done = this.isOver();
     ui.status(p.qualified && !done ? `<b>${esc(p.name)}</b> est qualifié(e) !` : '');
     this.panel(revealObj(this.q, `✔ ${esc(p.name)} +${plural(this.value, 'point')}`, 'good', done ? 'Résultats' : 'Question suivante'));
@@ -390,6 +402,7 @@ const Prelim = {
       this.state = 'open';
       ui.status('Les autres peuvent encore buzzer !');
       this.qTimer.start();
+      if (this.lvTimer) this.lvTimer.start();
       Track.play();
       ui.timer(this.qTimer, 'q');
       this.panel(); this.scores();
@@ -404,12 +417,13 @@ const Prelim = {
     this.state = 'reveal';
     this.buzzer = null;
     Track.play();
+    if (this.q.logo) showQ(this.q, 4);
     ui.status('');
     this.panel(revealObj(this.q, msg, 'neutral', 'Question suivante'));
     on('next', () => this.next());
     this.scores();
   },
-  stopTimers() { if (this.qTimer) this.qTimer.stop(); if (this.aTimer) this.aTimer.stop(); },
+  stopTimers() { if (this.qTimer) this.qTimer.stop(); if (this.aTimer) this.aTimer.stop(); if (this.lvTimer) this.lvTimer.stop(); },
   isOver() {
     const n = this.players.length;
     const qualified = this.players.filter(p => p.qualified).length;
@@ -448,7 +462,8 @@ const Semi = {
   get rules() {
     return [
     `Chacun son tour : ${(60000 + EXTRA()) / 1000} secondes au chrono.`,
-    isHits() ? 'Une chanson passe : tape son titre OU le nom de l\'artiste (les petites fautes passent).'
+    isLogos() ? 'Un logo apparaît : tape le nom de la marque (les petites fautes passent).'
+      : isHits() ? 'Une chanson passe : tape son titre OU le nom de l\'artiste (les petites fautes passent).'
       : (isMusic() ? 'Une musique passe : tape' : 'Tape') + ' le nom de l\'animé (anglais ou japonais, les petites fautes passent).',
     'Objectif : 4 bonnes réponses d\'affilée. Erreur ou « Passer » = série remise à zéro.',
     'Classement : meilleure série, puis temps restant, puis nombre de bonnes réponses.',
@@ -525,7 +540,7 @@ const Semi = {
     this.qKey = q.media.id;
     showQ(q, 4);
     Track.load(q); Track.play();
-    ui.status(`Au tour de <b style="color:${this.cur.color}">${esc(this.cur.name)}</b> : ${isHits() ? 'quelle est cette chanson' : 'quel est cet animé'} ?`);
+    ui.status(`Au tour de <b style="color:${this.cur.color}">${esc(this.cur.name)}</b> : ${isHits() ? 'quelle est cette chanson' : isLogos() ? 'quelle est cette marque' : 'quel est cet animé'} ?`);
     this.state = 'open';
     this.panel();
     this.chrono.start();
@@ -623,6 +638,9 @@ const Final = {
         'La musique démarre : plus tu buzzes tôt, plus ça rapporte.',
         '0-8 s = 4 pts · 8-16 s = 3 pts · 16-24 s = 2 pts · 24-33 s = 1 pt.',
         'Le buzz arrête la musique et le chrono pour tout le monde.',
+      ] : isLogos() ? [
+        'Le logo apparaît très flou, puis devient plus net toutes les 5 secondes.',
+        'Très flou = 4 pts · flou = 3 pts · presque net = 2 pts · net = 1 pt.',
       ] : [
         'Les images apparaissent une par une, toutes les 5 secondes.',
         'Buzz avec 1 image = 4 pts · 2 images = 3 pts · 3 images = 2 pts · 4 images = 1 pt.',
@@ -700,7 +718,7 @@ const Final = {
     ui.timer(this.step, 'q');
   },
   updateInfo() {
-    ui.qInfo(`Question ${this.qCount} · ${this.q.audio ? '' : plural(this.revealed, 'image') + ' · '}<b>${plural(this.value(), 'point')}</b>`);
+    ui.qInfo(`Question ${this.qCount} · ${this.q.audio ? '' : this.q.logo ? `netteté ${this.revealed}/4 · ` : plural(this.revealed, 'image') + ' · '}<b>${plural(this.value(), 'point')}</b>`);
   },
   onBuzz(p) {
     if (this.state !== 'open' || !this.eligible(p)) return;
@@ -788,7 +806,7 @@ function resetPlay() {
   G.handlers = {};
   G.override = null;
   G.round = null;
-  Object.assign(G.view, { overlay: null, panel: {}, grid: null, stage: null, status: '', qInfo: '', scores: [], buzz: { open: false, ids: [], show: false } });
+  Object.assign(G.view, { overlay: null, panel: {}, grid: null, stage: null, logo: null, status: '', qInfo: '', scores: [], buzz: { open: false, ids: [], show: false } });
   ui.hideToast();
 }
 
@@ -847,6 +865,7 @@ async function startGame() {
   G.settings = {
     difficulty: $('#difficulty').value, target: +$('#finalTarget').value, theme: $('#theme').value,
     decades: $$('#decadePick input:checked').map(i => i.value), styles: $$('#stylePick input:checked').map(i => i.value),
+    cats: $$('#logoPick input:checked').map(i => i.value),
   };
   localStorage.setItem('aqc-settings', JSON.stringify(G.settings));
   if (!G.online) {
@@ -864,18 +883,22 @@ async function startGame() {
   keepAwake();
 
   const gen = ++G.gen;
-  G.view.loading = isHits() ? 'Recherche des chansons…' : 'Chargement des animés depuis AniList…';
+  G.view.loading = isHits() ? 'Recherche des chansons…' : isLogos() ? 'Chargement des logos…' : 'Chargement des animés depuis AniList…';
   ui.screen('loading');
   try {
     let pool;
-    if (isHits()) {
+    if (isLogos()) {
+      await Logos.load();
+      pool = Logos.pool(G.settings.cats);
+      if (pool.length < 12) throw new Error(`Seulement ${pool.length} logos avec ces catégories : coche-en plus.`);
+    } else if (isHits()) {
       pool = Hits.pool(G.settings.decades, G.settings.styles);
       if (pool.length < 12) throw new Error(`Seulement ${pool.length} chansons avec ces choix : coche plus de décennies ou de styles.`);
     } else {
       pool = await API.loadPool(G.settings.difficulty);
     }
     if (gen !== G.gen) return;
-    G.bank = isHits() ? new HitsBank(pool) : isMusic() ? new MusicBank(pool) : new QuestionBank(pool);
+    G.bank = isLogos() ? new LogoBank(pool) : isHits() ? new HitsBank(pool) : isMusic() ? new MusicBank(pool) : new QuestionBank(pool);
     G.view.loading = isMusic() ? 'Recherche des openings et endings…' : 'Préparation des images…';
     touch();
     await G.bank.fill();
@@ -1032,7 +1055,21 @@ function renderPlay(v) {
 
   // music stage (music quiz) or image grid (images quiz)
   const st = v.stage;
-  $('#grid').classList.toggle('hidden', !!st);
+  const lg = v.logo;
+  $('#grid').classList.toggle('hidden', !!st || !!lg);
+  const ls = $('#logoStage');
+  ls.classList.toggle('hidden', !lg);
+  if (lg) {
+    const isNew = setHTML(ls, `<div class="logo-card ${lg.dark ? 'dark' : ''}"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#${lg.h}" d="${lg.p}"/></svg></div>`);
+    const svg = ls.querySelector('svg');
+    const [blur, zoom] = [[0.085, 1.7], [0.05, 1.35], [0.022, 1.1], [0, 1]][lg.level - 1] || [0, 1];
+    // a new logo must appear already blurred (no sharp flash): no transition for its first state
+    if (isNew) svg.style.transition = 'none';
+    const w = ls.getBoundingClientRect().width * 0.55 || 200;
+    svg.style.filter = blur ? `blur(${(blur * w).toFixed(1)}px)` : 'none';
+    svg.style.transform = `scale(${zoom})`;
+    if (isNew) { void svg.getBoundingClientRect(); requestAnimationFrame(() => { svg.style.transition = ''; }); }
+  }
   const ms = $('#musicStage');
   ms.classList.toggle('hidden', !st);
   if (st) {
@@ -1386,10 +1423,10 @@ async function hostRoom() {
     G.online = true; G.isHost = true; G.me = 0; G.nextId = 0; G.inGame = false;
     G.players = [{ id: 0, name, color: COLORS[0], key: '' }];
     G.view = freshView();
-    const hits = $('#theme').value === 'hits';
+    const hits = $('#theme').value === 'hits', logos = $('#theme').value === 'logos';
     G.view.lobby = {
       code, error: '', quiz: $('#theme').selectedOptions[0].dataset.short,
-      diff: hits ? $$('#decadePick input:checked').map(i => i.value === '00' ? '2000s' : i.parentNode.textContent.trim()).join(', ') : $('#difficulty').selectedOptions[0].dataset.short,
+      diff: logos ? $$('#logoPick input:checked').map(i => i.parentNode.textContent.trim()).join(', ') : hits ? $$('#decadePick input:checked').map(i => i.value === '00' ? '2000s' : i.parentNode.textContent.trim()).join(', ') : $('#difficulty').selectedOptions[0].dataset.short,
     };
     ui.screen('lobby');
     history.replaceState(null, '', location.pathname);
@@ -1517,8 +1554,9 @@ const Setup = {
     if (s.theme) $('#theme').value = s.theme;
     if (s.decades) $$('#decadePick input').forEach(i => { i.checked = s.decades.includes(i.value); });
     if (s.styles) $$('#stylePick input').forEach(i => { i.checked = s.styles.includes(i.value); });
+    if (s.cats) $$('#logoPick input').forEach(i => { i.checked = s.cats.includes(i.value); });
     const quiz = new URLSearchParams(location.search).get('quiz');
-    if (['images', 'music', 'hits'].includes(quiz)) $('#theme').value = quiz;
+    if (['images', 'music', 'hits', 'logos'].includes(quiz)) $('#theme').value = quiz;
     this.applyTheme();
     $('#myName').value = localStorage.getItem('aqc-me') || '';
     const join = new URLSearchParams(location.search).get('join');
@@ -1529,9 +1567,9 @@ const Setup = {
   applyTheme() {
     const t = $('#theme').value;
     $('#home').dataset.theme = t;
-    $('.logo').innerHTML = t === 'hits' ? 'Blind Test <span>Champion</span>' : 'Anime Quiz <span>Champion</span>';
-    $('.tagline').textContent = t === 'hits' ? '1 chanson · 1 buzz · 1 seul champion' : t === 'music' ? '1 opening · 1 animé · 1 seul champion' : '4 images · 1 animé · 1 seul champion';
-    document.title = t === 'hits' ? 'Blind Test Champion — devine la chanson' : 'Anime Quiz Champion — 4 images, 1 animé';
+    $('.logo').innerHTML = t === 'hits' ? 'Blind Test <span>Champion</span>' : t === 'logos' ? 'Logo Quiz <span>Champion</span>' : 'Anime Quiz <span>Champion</span>';
+    $('.tagline').textContent = t === 'hits' ? '1 chanson · 1 buzz · 1 seul champion' : t === 'logos' ? '1 logo flou · 1 marque · 1 seul champion' : t === 'music' ? '1 opening · 1 animé · 1 seul champion' : '4 images · 1 animé · 1 seul champion';
+    document.title = t === 'hits' ? 'Blind Test Champion — devine la chanson' : t === 'logos' ? 'Logo Quiz Champion — devine la marque' : 'Anime Quiz Champion — 4 images, 1 animé';
   },
   setMode(mode) {
     this.mode = mode;

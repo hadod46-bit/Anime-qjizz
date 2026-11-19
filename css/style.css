@@ -447,3 +447,25 @@ select option { background: #1b1150; }
   .scoreboard.many .pcard { grid-template-columns: 1fr auto; grid-template-areas: "n s" "b b"; }
   .scoreboard.many .pbadge:empty { display: none; }
 }
+
+/* ================= Logo quiz ================= */
+.logo-stage {
+  --size: min(56vw, calc(100vh - 130px));
+  width: var(--size); height: var(--size);
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 22px; padding: 10px; background: rgba(0,0,0,0.3); border: 1px solid var(--panel-b);
+}
+.logo-stage.hidden { display: none; }
+#play.has-buzz .logo-stage { --size: min(56vw, calc(100vh - 240px)); }
+.logo-card {
+  width: 100%; height: 100%; border-radius: 16px; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(circle at 50% 40%, #ffffff, #e6e4f0);
+}
+.logo-card.dark { background: radial-gradient(circle at 50% 40%, #2a1f6e, #120c33); }
+.logo-card svg { width: 58%; height: 58%; transition: filter 0.8s ease, transform 0.8s ease; }
+#home:not([data-theme="logos"]) .logos-only { display: none; }
+#home[data-theme="logos"] .not-hits { display: none; }
+@media (max-width: 900px) {
+  .logo-stage, #play.has-buzz .logo-stage { --size: min(calc(100vw - 32px), 46vh); margin: 0 auto; }
+}

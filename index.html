@@ -39,7 +39,20 @@
             <option value="images" data-short="🖼️ Quiz 4 images" selected>🖼️ 4 images — devine l'animé</option>
             <option value="music" data-short="🎵 Quiz musique">🎵 Musique — devine l'opening / ending (+10 s)</option>
             <option value="hits" data-short="🎤 Blind test">🎤 Blind test — tubes du monde entier (+10 s)</option>
+            <option value="logos" data-short="🏷️ Logo quiz">🏷️ Logos — devine la marque</option>
           </select>
+          <div class="logos-only">
+            <h3>Catégories</h3>
+            <div id="logoPick" class="pick">
+              <label><input type="checkbox" value="apps" checked />📱 Apps &amp; Web</label>
+              <label><input type="checkbox" value="tech" checked />💻 High-tech</label>
+              <label><input type="checkbox" value="auto" checked />🚗 Voitures</label>
+              <label><input type="checkbox" value="sport" checked />👟 Sport</label>
+              <label><input type="checkbox" value="food" checked />🍔 Food &amp; Magasins</label>
+              <label><input type="checkbox" value="games" checked />🎮 Jeux vidéo</label>
+              <label><input type="checkbox" value="misc" checked />✈️ Voyage &amp; Divers</label>
+            </div>
+          </div>
           <div class="hits-only">
             <h3>Décennies</h3>
             <div id="decadePick" class="pick">
@@ -95,6 +108,7 @@
           <li>Bonus : le 1<sup>er</sup> qualifié du préliminaire démarre la finale avec +1 point, le vainqueur de la demi-finale avec +2.</li>
         </ol>
         <p>📱 <b>En ligne :</b> un joueur crée la salle et envoie le code (ou le lien) aux autres (jusqu'à 8 joueurs). Chacun buzze avec le gros bouton de son téléphone.</p>
+        <p>🏷️ <b>Logo quiz :</b> le logo d'une marque apparaît flou et zoomé, puis devient net toutes les 5 secondes. Plus tu buzzes tôt, plus c'est dur… mais en finale ça rapporte plus !</p>
         <p>🎤 <b>Blind test :</b> des tubes des années 70 à aujourd'hui (pop, rap, rock, R&amp;B, électro, français). Trouvez le titre <i>ou</i> l'artiste. Extraits de 30 secondes.</p>
         <p>🎵 <b>Quiz musique :</b> un opening ou un ending passe à la place des images, avec 10 secondes de plus sur les chronos. Le buzz coupe la musique pour tout le monde.</p>
         <p>📺 <b>Même écran :</b> chaque joueur a son buzzer en bas de l'écran (ou les touches <b>A</b>, <b>P</b>, <b>V</b>, <b>M</b>). Touches <b>1-4</b> pour le QCM, <b>Entrée</b> pour passer à la suite.</p>
@@ -166,6 +180,7 @@
           <div class="cell"><span class="num">4</span><img alt="" /></div>
         </div>
         <div id="musicStage" class="music-stage hidden"></div>
+        <div id="logoStage" class="logo-stage hidden"></div>
         <div id="overlay" class="overlay hidden"></div>
       </div>
 
@@ -207,6 +222,7 @@
   <script src="js/vendor/peerjs.min.js"></script>
   <script src="js/api.js"></script>
   <script src="js/hits.js"></script>
+  <script src="js/logoquiz.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
