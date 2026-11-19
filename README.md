@@ -11,7 +11,8 @@ images are loaded live from the free [AniList](https://anilist.co) API.
 - **4 images:** 4 random pictures of an anime (characters and scenes).
 - **Musique:** an opening or ending plays (from [AnimeThemes.moe](https://animethemes.moe)). Every timer gets **+10 seconds**.
   A buzz pauses the music and the timer for everyone.
-- **Blind test:** about 235 worldwide hits from the 70s to the 2020s (pop, rap, rock, R&B/soul, disco/électro, French songs).
+- **Blind test:** about 235 worldwide hits from the 70s to the 2020s (pop, rap, rock, R&B/soul, disco/électro, French songs),
+  plus 🇲🇦 Moroccan chaabi, loaded live from Deezer's chaabi playlists (all eras, no decade filter).
   Pick the decades and styles. Find the **title or the artist**. 30-second previews from Deezer (iTunes as backup), +10 seconds on the timers.
   Direct link: `/blindtest/`.
 - **Logos:** 166 brand logos in 7 categories (apps, high-tech, cars, sport, food & shops, video games, travel & misc).

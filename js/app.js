@@ -866,6 +866,7 @@ async function startGame() {
     difficulty: $('#difficulty').value, target: +$('#finalTarget').value, theme: $('#theme').value,
     decades: $$('#decadePick input:checked').map(i => i.value), styles: $$('#stylePick input:checked').map(i => i.value),
     cats: $$('#logoPick input:checked').map(i => i.value),
+    hasChaabi: true,
   };
   localStorage.setItem('aqc-settings', JSON.stringify(G.settings));
   if (!G.online) {
@@ -893,6 +894,12 @@ async function startGame() {
       if (pool.length < 12) throw new Error(`Seulement ${pool.length} logos avec ces catégories : coche-en plus.`);
     } else if (isHits()) {
       pool = Hits.pool(G.settings.decades, G.settings.styles);
+      if (G.settings.styles.includes('chaabi')) {
+        G.view.loading = 'Recherche du chaabi marocain 🇲🇦…'; touch();
+        const ch = await Hits.chaabi();
+        if (!ch.length && pool.length < 12) throw new Error('Impossible de charger le chaabi (Deezer / iTunes). Vérifie ta connexion ou coche d\'autres styles.');
+        pool = pool.concat(ch);
+      }
       if (pool.length < 12) throw new Error(`Seulement ${pool.length} chansons avec ces choix : coche plus de décennies ou de styles.`);
     } else {
       pool = await API.loadPool(G.settings.difficulty);
@@ -1553,7 +1560,7 @@ const Setup = {
     if (s.target) $('#finalTarget').value = s.target;
     if (s.theme) $('#theme').value = s.theme;
     if (s.decades) $$('#decadePick input').forEach(i => { i.checked = s.decades.includes(i.value); });
-    if (s.styles) $$('#stylePick input').forEach(i => { i.checked = s.styles.includes(i.value); });
+    if (s.styles) $$('#stylePick input').forEach(i => { i.checked = s.styles.includes(i.value) || (i.value === 'chaabi' && !s.hasChaabi); });
     if (s.cats) $$('#logoPick input').forEach(i => { i.checked = s.cats.includes(i.value); });
     const quiz = new URLSearchParams(location.search).get('quiz');
     if (['images', 'music', 'hits', 'logos'].includes(quiz)) $('#theme').value = quiz;

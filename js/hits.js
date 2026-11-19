@@ -269,6 +269,7 @@ const STYLES = [
   { id: 'rnb', label: 'R&B / Soul' },
   { id: 'dance', label: 'Disco / Électro' },
   { id: 'fr', label: '🇫🇷 Français' },
+  { id: 'chaabi', label: '🇲🇦 Chaabi' },   // loaded live from Deezer playlists (see Hits.chaabi)
 ];
 const decadeOf = year => DECADES.find(d => year >= d.from && year < d.from + 10) || DECADES[DECADES.length - 1];
 
@@ -341,7 +342,74 @@ const Hits = (() => {
     return null;
   }
 
-  return { pool, preview };
+  /* ---------- Moroccan chaabi: real songs taken from Deezer's chaabi playlists ---------- */
+  let chaabiCache = null;
+  const latin = s => Match.norm(s).length >= 2;   // the answer must be typeable with a normal keyboard
+  const cleanTitle = t => (t || '').replace(/\s*[\(\[].*?[\)\]]/g, '').replace(/\s+-\s+.*$/, '').trim();
+
+  function chaabiMedia(list) {
+    const seen = new Set(), perArtist = {}, out = [];
+    for (const t of list) {
+      const title = cleanTitle(t.title), artist = (t.artist || '').trim();
+      if (!t.url || !latin(title) || !latin(artist)) continue;
+      const key = Match.norm(title) + '|' + Match.norm(artist);
+      if (seen.has(key)) continue;
+      const a = Match.norm(artist);
+      if ((perArtist[a] = (perArtist[a] || 0) + 1) > 4) continue;   // variety: max 4 songs per artist
+      seen.add(key);
+      out.push({
+        id: 'c' + out.length + '-' + key.slice(0, 20),
+        display: title,
+        title: { english: title, romaji: artist },
+        synonyms: [artist],
+        choiceLabel: `${title} — ${artist}`,
+        coverImage: { large: t.cover || '' },
+        base: Match.norm(title),
+        artist, mainArtist: artist, year: null, style: 'chaabi',
+        decade: '', styleLabel: '🇲🇦 Chaabi',
+        preset: { url: t.url, cover: t.cover },
+      });
+      if (out.length >= 80) break;
+    }
+    return out;
+  }
+
+  async function chaabiDeezer() {
+    const tracks = [];
+    const playlists = [];
+    for (const q of ['chaabi marocain', 'chaabi maroc', 'chaabi']) {
+      const d = await jsonp('https://api.deezer.com/search/playlist?limit=10&q=' + encodeURIComponent(q), 'output=jsonp&callback=');
+      for (const p of (d && d.data) || []) {
+        if (p.nb_tracks >= 15 && !playlists.some(x => x.id === p.id)) playlists.push(p);
+      }
+      if (playlists.length >= 3) break;
+    }
+    for (const p of playlists.slice(0, 3)) {
+      const d = await jsonp(`https://api.deezer.com/playlist/${p.id}/tracks?limit=100`, 'output=jsonp&callback=');
+      for (const t of (d && d.data) || []) {
+        if (!t.preview || t.readable === false) continue;
+        tracks.push({ title: t.title_short || t.title, artist: t.artist && t.artist.name, url: t.preview, cover: t.album && (t.album.cover_big || t.album.cover_medium) });
+      }
+    }
+    return tracks;
+  }
+
+  async function chaabiItunes() {
+    const d = await jsonp('https://itunes.apple.com/search?entity=song&limit=150&term=' + encodeURIComponent('chaabi marocain'), 'callback=');
+    return ((d && d.results) || []).map(t => ({ title: t.trackName, artist: t.artistName, url: t.previewUrl, cover: (t.artworkUrl100 || '').replace('100x100', '400x400') }));
+  }
+
+  /** Chaabi songs (no decade filter: chaabi spans every era). */
+  async function chaabi() {
+    if (chaabiCache && chaabiCache.length) return shuffle(chaabiCache);
+    let list = [];
+    try { list = chaabiMedia(await chaabiDeezer()); } catch (e) { /* try iTunes */ }
+    if (list.length < 12) { try { list = chaabiMedia([...list.map(m => ({ title: m.display, artist: m.artist, url: m.preset.url, cover: m.preset.cover })), ...await chaabiItunes()]); } catch (e) { /* ignore */ } }
+    chaabiCache = list;
+    return shuffle(list);
+  }
+
+  return { pool, preview, chaabi };
 })();
 
 class HitsBank extends MusicBank {
@@ -352,12 +420,12 @@ class HitsBank extends MusicBank {
         let misses = 0;
         while (this.ready.length < 3 && this.queue.length) {
           const batch = this.queue.splice(0, 3);
-          const found = await Promise.all(batch.map(m => Hits.preview(m)));
+          const found = await Promise.all(batch.map(m => m.preset || Hits.preview(m)));
           batch.forEach((m, k) => {
             const r = found[k];
             if (!r) { misses++; return; }
             m.coverImage = { large: r.cover || '' };
-            this.ready.push({ media: m, audio: { url: r.url, label: m.decade } });
+            this.ready.push({ media: m, audio: { url: r.url, label: m.decade || m.styleLabel } });
           });
           if (!this.ready.length && misses >= 9) throw new Error('Impossible de charger les extraits musicaux (Deezer / iTunes). Vérifie ta connexion.');
         }
