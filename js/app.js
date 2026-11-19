@@ -149,9 +149,11 @@ const ui = {
 };
 
 /* ---------- Music mode helpers (host) ---------- */
-const isMusic = () => G.settings.theme === 'music';
+const isMusic = () => G.settings.theme === 'music' || G.settings.theme === 'hits';
+const isHits = () => G.settings.theme === 'hits';
+const answerHint = () => (isHits() ? 'Titre ou artiste…' : "Nom de l'animé…");
 const EXTRA = () => (isMusic() ? 10000 : 0);   // music quiz: +10 s on the clocks
-const themeLabel = a => `${a.type === 'OP' ? 'Opening' : 'Ending'}${a.seq > 1 ? ' ' + a.seq : ''}`;
+const themeLabel = a => a.label || `${a.type === 'OP' ? 'Opening' : 'Ending'}${a.seq > 1 ? ' ' + a.seq : ''}`;
 
 /** Shows the question: 4 images (images quiz) or the music stage (music quiz). */
 function showQ(q, revealed = 4, extra) {
@@ -205,7 +207,8 @@ function revealObj(q, msg, kind, nextLabel) {
   }
   const romaji = media.title.romaji && media.title.romaji !== media.display ? media.title.romaji : '';
   const cover = (media.coverImage && (media.coverImage.large || media.coverImage.extraLarge)) || '';
-  const song = q.audio ? `🎵 ${themeLabel(q.audio)}${q.audio.song ? ` · « ${esc(q.audio.song)} »` : ''}` : '';
+  const song = media.year ? `📅 ${media.year} · ${esc(media.styleLabel || '')}`
+    : q.audio ? `🎵 ${themeLabel(q.audio)}${q.audio.song ? ` · « ${esc(q.audio.song)} »` : ''}` : '';
   return { msg, kind, title: media.display, sub: romaji, song, cover, next: nextLabel ? { label: nextLabel, who: 'any' } : null };
 }
 
@@ -262,7 +265,8 @@ const Prelim = {
   canSkip: true,
   get rules() {
     return [
-    isMusic() ? 'Un opening ou un ending passe : buzzez dès que vous reconnaissez l\'animé !' : '4 images, 1 animé : buzzez dès que vous avez trouvé !',
+    isHits() ? 'Une chanson passe : buzzez dès que vous la reconnaissez !'
+      : isMusic() ? 'Un opening ou un ending passe : buzzez dès que vous reconnaissez l\'animé !' : '4 images, 1 animé : buzzez dès que vous avez trouvé !',
     `${(20000 + EXTRA()) / 1000} secondes par question. Le buzz arrête le chrono${isMusic() ? ' et la musique' : ''} pour tout le monde.`,
     'Après le buzz, 4 propositions apparaissent pour celui qui a buzzé : 8 secondes pour choisir.',
     'Questions 1-3 : 1 point · 4-6 : 2 points · ensuite : 3 points.',
@@ -299,7 +303,7 @@ const Prelim = {
     ui.panel({
       reveal,
       choices: {
-        items: q.choices.map(m => m.display),
+        items: q.choices.map(m => m.choiceLabel || m.display),
         armed: this.state === 'answering' ? this.buzzer.id : null,
         wrong: [...this.wrongChoices],
         right: this.state === 'reveal' ? q.choices.findIndex(m => m.id === q.media.id) : null,
@@ -433,7 +437,8 @@ const Semi = {
   get rules() {
     return [
     `Chacun son tour : ${(60000 + EXTRA()) / 1000} secondes au chrono.`,
-    (isMusic() ? 'Une musique passe : tape' : 'Tape') + ' le nom de l\'animé (anglais ou japonais, les petites fautes passent).',
+    isHits() ? 'Une chanson passe : tape son titre OU le nom de l\'artiste (les petites fautes passent).'
+      : (isMusic() ? 'Une musique passe : tape' : 'Tape') + ' le nom de l\'animé (anglais ou japonais, les petites fautes passent).',
     'Objectif : 4 bonnes réponses d\'affilée. Erreur ou « Passer » = série remise à zéro.',
     'Classement : meilleure série, puis temps restant, puis nombre de bonnes réponses.',
     'Le vainqueur gagne +2 points d\'avance en finale.',
@@ -464,7 +469,7 @@ const Semi = {
     ui.panel({
       streak: this.cur.r2.streak,
       input: {
-        for: this.cur.id, name: this.cur.name, placeholder: "Nom de l'animé…", pass: true,
+        for: this.cur.id, name: this.cur.name, placeholder: answerHint(), pass: true,
         enabled: this.state === 'open', key: 's' + this.qKey,
       },
     });
@@ -509,7 +514,7 @@ const Semi = {
     this.qKey = q.media.id;
     showQ(q, 4);
     Track.load(q); Track.play();
-    ui.status(`Au tour de <b style="color:${this.cur.color}">${esc(this.cur.name)}</b> : quel est cet animé ?`);
+    ui.status(`Au tour de <b style="color:${this.cur.color}">${esc(this.cur.name)}</b> : ${isHits() ? 'quelle est cette chanson' : 'quel est cet animé'} ?`);
     this.state = 'open';
     this.panel();
     this.chrono.start();
@@ -695,7 +700,7 @@ const Final = {
     this.step.pause();
     Track.pause();
     ui.status(`<b style="color:${p.color}">${esc(p.name)}</b> buzze pour <b>${plural(this.buzzValue, 'point')}</b> !`);
-    ui.panel({ input: { for: p.id, name: p.name, placeholder: "Nom de l'animé…", pass: false, enabled: true, key: `f${this.qCount}-${p.id}` } });
+    ui.panel({ input: { for: p.id, name: p.name, placeholder: answerHint(), pass: false, enabled: true, key: `f${this.qCount}-${p.id}` } });
     this.aTimer = new Timer(15000, () => this.answer('', null, true)).start();
     ui.timer(this.aTimer, 'answer');
     this.scores();
@@ -828,7 +833,10 @@ function fatal(e) {
 
 async function startGame() {
   if (!G.isHost) return;
-  G.settings = { difficulty: $('#difficulty').value, target: +$('#finalTarget').value, theme: $('#theme').value };
+  G.settings = {
+    difficulty: $('#difficulty').value, target: +$('#finalTarget').value, theme: $('#theme').value,
+    decades: $$('#decadePick input:checked').map(i => i.value), styles: $$('#stylePick input:checked').map(i => i.value),
+  };
   localStorage.setItem('aqc-settings', JSON.stringify(G.settings));
   if (!G.online) {
     const names = Setup.names.map((n, i) => (n || '').trim() || `Joueur ${i + 1}`);
@@ -845,12 +853,18 @@ async function startGame() {
   keepAwake();
 
   const gen = ++G.gen;
-  G.view.loading = 'Chargement des animés depuis AniList…';
+  G.view.loading = isHits() ? 'Recherche des chansons…' : 'Chargement des animés depuis AniList…';
   ui.screen('loading');
   try {
-    const pool = await API.loadPool(G.settings.difficulty);
+    let pool;
+    if (isHits()) {
+      pool = Hits.pool(G.settings.decades, G.settings.styles);
+      if (pool.length < 12) throw new Error(`Seulement ${pool.length} chansons avec ces choix : coche plus de décennies ou de styles.`);
+    } else {
+      pool = await API.loadPool(G.settings.difficulty);
+    }
     if (gen !== G.gen) return;
-    G.bank = isMusic() ? new MusicBank(pool) : new QuestionBank(pool);
+    G.bank = isHits() ? new HitsBank(pool) : isMusic() ? new MusicBank(pool) : new QuestionBank(pool);
     G.view.loading = isMusic() ? 'Recherche des openings et endings…' : 'Préparation des images…';
     touch();
     await G.bank.fill();
@@ -1360,7 +1374,11 @@ async function hostRoom() {
     G.online = true; G.isHost = true; G.me = 0; G.nextId = 0; G.inGame = false;
     G.players = [{ id: 0, name, color: COLORS[0], key: '' }];
     G.view = freshView();
-    G.view.lobby = { code, error: '', quiz: $('#theme').selectedOptions[0].dataset.short, diff: $('#difficulty').selectedOptions[0].dataset.short };
+    const hits = $('#theme').value === 'hits';
+    G.view.lobby = {
+      code, error: '', quiz: $('#theme').selectedOptions[0].dataset.short,
+      diff: hits ? $$('#decadePick input:checked').map(i => i.value === '00' ? '2000s' : i.parentNode.textContent.trim()).join(', ') : $('#difficulty').selectedOptions[0].dataset.short,
+    };
     ui.screen('lobby');
     history.replaceState(null, '', location.pathname);
   } catch (e) {
@@ -1485,11 +1503,23 @@ const Setup = {
     if (s.difficulty) $('#difficulty').value = s.difficulty;
     if (s.target) $('#finalTarget').value = s.target;
     if (s.theme) $('#theme').value = s.theme;
+    if (s.decades) $$('#decadePick input').forEach(i => { i.checked = s.decades.includes(i.value); });
+    if (s.styles) $$('#stylePick input').forEach(i => { i.checked = s.styles.includes(i.value); });
+    const quiz = new URLSearchParams(location.search).get('quiz');
+    if (['images', 'music', 'hits'].includes(quiz)) $('#theme').value = quiz;
+    this.applyTheme();
     $('#myName').value = localStorage.getItem('aqc-me') || '';
     const join = new URLSearchParams(location.search).get('join');
     if (join) $('#joinCode').value = join.toUpperCase();
     this.setMode(join ? 'online' : localStorage.getItem('aqc-mode') || 'online');
     this.render();
+  },
+  applyTheme() {
+    const t = $('#theme').value;
+    $('#home').dataset.theme = t;
+    $('.logo').innerHTML = t === 'hits' ? 'Blind Test <span>Champion</span>' : 'Anime Quiz <span>Champion</span>';
+    $('.tagline').textContent = t === 'hits' ? '1 chanson · 1 buzz · 1 seul champion' : t === 'music' ? '1 opening · 1 animé · 1 seul champion' : '4 images · 1 animé · 1 seul champion';
+    document.title = t === 'hits' ? 'Blind Test Champion — devine la chanson' : 'Anime Quiz Champion — 4 images, 1 animé';
   },
   setMode(mode) {
     this.mode = mode;
@@ -1536,6 +1566,7 @@ function confetti() {
 }
 
 /* ---------------- Wiring ---------------- */
+$('#theme').addEventListener('change', () => Setup.applyTheme());
 $$('.mode-tabs .tab').forEach(t => { t.onclick = () => { Setup.setMode(t.dataset.mode); $('#homeError').textContent = ''; }; });
 $('#addPlayer').onclick = () => { if (Setup.names.length < 4) { Setup.names.push(`Joueur ${Setup.names.length + 1}`); Setup.render(); } };
 $('#startBtn').onclick = () => { Sound.unlock(); Player.unlock(); G.online = false; G.isHost = true; startGame(); };

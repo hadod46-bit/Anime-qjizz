@@ -15,6 +15,7 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
+html { background: var(--bg1); }
 body {
   font-family: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
   color: var(--text);
@@ -421,3 +422,15 @@ select option { background: #1b1150; }
 @media (max-width: 900px) {
   #play.has-buzz .grid, #play.has-buzz .music-stage { --size: min(calc(100vw - 32px), 46vh); }
 }
+
+/* ================= Blind test settings ================= */
+.pick { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.pick label {
+  display: inline-flex; align-items: center; gap: 4px; cursor: pointer; user-select: none;
+  padding: 6px 10px; border-radius: 999px; font-size: 0.9rem; font-weight: 600;
+  background: rgba(0,0,0,0.3); border: 2px solid var(--panel-b); color: var(--muted);
+}
+.pick input { display: none; }
+.pick label:has(input:checked) { border-color: var(--gold); color: var(--text); background: rgba(255, 207, 63, 0.12); }
+#home:not([data-theme="hits"]) .hits-only { display: none; }
+#home[data-theme="hits"] .not-hits { display: none; }

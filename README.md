@@ -7,10 +7,13 @@
 Open the site (or `index.html`) in a browser. There is nothing to install, but you need an internet connection: anime and
 images are loaded live from the free [AniList](https://anilist.co) API.
 
-### 🖼️ / 🎵 Two quizzes
+### 🖼️ / 🎵 / 🎤 Three quizzes
 - **4 images:** 4 random pictures of an anime (characters and scenes).
 - **Musique:** an opening or ending plays (from [AnimeThemes.moe](https://animethemes.moe)). Every timer gets **+10 seconds**.
   A buzz pauses the music and the timer for everyone.
+- **Blind test:** about 235 worldwide hits from the 70s to the 2020s (pop, rap, rock, R&B/soul, disco/électro, French songs).
+  Pick the decades and styles. Find the **title or the artist**. 30-second previews from Deezer (iTunes as backup), +10 seconds on the timers.
+  Direct link: `/blindtest/`. The song list is in `js/hits.js`, so it's easy to add more.
 
 ### 📱 Online: each player on their own phone
 1. Player 1 picks a nickname and taps **Créer une salle**. A 5-letter code appears.

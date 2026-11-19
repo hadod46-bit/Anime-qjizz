@@ -38,9 +38,30 @@
           <select id="theme" class="field">
             <option value="images" data-short="🖼️ Quiz 4 images" selected>🖼️ 4 images — devine l'animé</option>
             <option value="music" data-short="🎵 Quiz musique">🎵 Musique — devine l'opening / ending (+10 s)</option>
+            <option value="hits" data-short="🎤 Blind test">🎤 Blind test — tubes du monde entier (+10 s)</option>
           </select>
-          <h3>Difficulté</h3>
-          <select id="difficulty" class="field">
+          <div class="hits-only">
+            <h3>Décennies</h3>
+            <div id="decadePick" class="pick">
+              <label><input type="checkbox" value="70" />70s</label>
+              <label><input type="checkbox" value="80" />80s</label>
+              <label><input type="checkbox" value="90" checked />90s</label>
+              <label><input type="checkbox" value="00" checked />2000s</label>
+              <label><input type="checkbox" value="10" checked />2010s</label>
+              <label><input type="checkbox" value="20" checked />2020s</label>
+            </div>
+            <h3>Styles</h3>
+            <div id="stylePick" class="pick">
+              <label><input type="checkbox" value="pop" checked />Pop</label>
+              <label><input type="checkbox" value="rap" checked />Rap</label>
+              <label><input type="checkbox" value="rock" checked />Rock</label>
+              <label><input type="checkbox" value="rnb" checked />R&amp;B / Soul</label>
+              <label><input type="checkbox" value="dance" checked />Disco / Électro</label>
+              <label><input type="checkbox" value="fr" checked />🇫🇷 Français</label>
+            </div>
+          </div>
+          <h3 class="not-hits">Difficulté</h3>
+          <select id="difficulty" class="field not-hits">
             <option value="facile" data-short="Facile">Facile — Top 100 des animés</option>
             <option value="moyen" data-short="Moyen" selected>Moyen — Top 300</option>
             <option value="difficile" data-short="Difficile">Difficile — Top 800</option>
@@ -74,6 +95,7 @@
           <li>Bonus : le 1<sup>er</sup> qualifié du préliminaire démarre la finale avec +1 point, le vainqueur de la demi-finale avec +2.</li>
         </ol>
         <p>📱 <b>En ligne :</b> un joueur crée la salle et envoie le code (ou le lien) aux autres. Chacun buzze avec le gros bouton de son téléphone.</p>
+        <p>🎤 <b>Blind test :</b> des tubes des années 70 à aujourd'hui (pop, rap, rock, R&amp;B, électro, français). Trouvez le titre <i>ou</i> l'artiste. Extraits de 30 secondes.</p>
         <p>🎵 <b>Quiz musique :</b> un opening ou un ending passe à la place des images, avec 10 secondes de plus sur les chronos. Le buzz coupe la musique pour tout le monde.</p>
         <p>📺 <b>Même écran :</b> chaque joueur a son buzzer en bas de l'écran (ou les touches <b>A</b>, <b>P</b>, <b>V</b>, <b>M</b>). Touches <b>1-4</b> pour le QCM, <b>Entrée</b> pour passer à la suite.</p>
         <p>Une réponse tapée a été refusée alors qu'elle était bonne ? Le bouton <b>« C'était bon ! »</b> permet de la valider.</p>
@@ -184,6 +206,7 @@
 
   <script src="js/vendor/peerjs.min.js"></script>
   <script src="js/api.js"></script>
+  <script src="js/hits.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
