@@ -469,3 +469,4 @@ select option { background: #1b1150; }
 @media (max-width: 900px) {
   .logo-stage, #play.has-buzz .logo-stage { --size: min(calc(100vw - 32px), 46vh); margin: 0 auto; }
 }
+.other-games { margin: -12px 0 18px; }

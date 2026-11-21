@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b0820" />
+  <title>Durak — le jeu de cartes</title>
+  <link rel="stylesheet" href="../css/style.css" />
+  <link rel="stylesheet" href="durak.css" />
+</head>
+<body>
+  <div class="bg-glow"></div>
+
+  <!-- ============ ACCUEIL ============ -->
+  <section id="home" class="screen active">
+    <div class="home-card">
+      <h1 class="logo">Durak <span>🃏</span></h1>
+      <p class="tagline">Le jeu de cartes russe : ne sois pas le dernier avec des cartes !</p>
+      <div class="setup one">
+        <div class="setup-block">
+          <h3>Ton pseudo</h3>
+          <input id="myName" class="field" maxlength="16" placeholder="Ex : Luffy" autocomplete="nickname" />
+          <h3>Code de la salle <small>(pour rejoindre)</small></h3>
+          <input id="joinCode" class="field code" maxlength="5" placeholder="Ex : K7PQ2" autocapitalize="characters" autocomplete="off" spellcheck="false" />
+        </div>
+      </div>
+      <div class="row">
+        <button id="hostBtn" class="btn primary big">Créer une salle</button>
+        <button id="joinBtn" class="btn big">Rejoindre</button>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button id="soloBtn" class="btn ghost">🤖 Jouer contre l'ordinateur</button>
+      </div>
+      <p id="homeError" class="error"></p>
+
+      <details class="rules">
+        <summary>Les règles du Durak</summary>
+        <ol>
+          <li><b>But :</b> se débarrasser de toutes ses cartes. Le dernier à en avoir est le <b>Durak</b> (« l'idiot ») !</li>
+          <li>Jeu de <b>36 cartes</b> (du 6 à l'As). Chacun reçoit 6 cartes. La carte retournée sous la pioche donne l'<b>atout</b>.</li>
+          <li>Le joueur avec le plus petit atout attaque en premier, son voisin de gauche défend.</li>
+          <li><b>Défendre :</b> battre chaque carte avec une carte plus forte de la même couleur, ou avec un atout (un atout ne se bat qu'avec un atout plus fort).</li>
+          <li><b>Relancer :</b> tous les attaquants peuvent ajouter des cartes de même valeur que celles déjà posées (6 cartes max, et jamais plus que ce que le défenseur a en main).</li>
+          <li>Si le défenseur bat tout : <b>« Bito »</b>, les cartes sont défaussées et c'est à lui d'attaquer.</li>
+          <li>S'il ne peut pas : il <b>prend</b> toutes les cartes (les autres peuvent encore en rajouter) et passe son tour d'attaque.</li>
+          <li>Après chaque tour, chacun repioche jusqu'à 6 cartes (l'attaquant d'abord, le défenseur en dernier).</li>
+          <li>Quand la pioche est vide, ceux qui n'ont plus de cartes sont sortis. Le dernier joueur est le Durak.</li>
+        </ol>
+        <p>En ligne : 2 à 6 joueurs. L'hôte peut ajouter des bots 🤖 pour compléter la table.</p>
+      </details>
+      <p class="back-link"><a href="../">← Retour aux quiz</a></p>
+    </div>
+  </section>
+
+  <!-- ============ SALLE ============ -->
+  <section id="lobby" class="screen">
+    <div class="intro-card">
+      <p class="intro-step" id="lobbyTitle">Salle en ligne</p>
+      <div id="lobbyCodeBox">
+        <p class="intro-sub">Code de la salle</p>
+        <h2 id="lobbyCode" class="room-code"></h2>
+        <div class="row"><button class="btn small" data-act="share">🔗 Partager le lien</button></div>
+      </div>
+      <h3 class="lobby-h">Joueurs</h3>
+      <div id="lobbyPlayers" class="chips"></div>
+      <div class="row" id="botRow">
+        <button class="btn small" data-act="addBot">+ 🤖 Ajouter un bot</button>
+      </div>
+      <p id="lobbyMsg" class="intro-sub"></p>
+      <p id="lobbyError" class="error"></p>
+      <div class="row">
+        <button id="lobbyStart" class="btn primary big" data-act="start">Distribuer les cartes</button>
+        <button class="btn ghost" data-act="home">Quitter</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ CHARGEMENT ============ -->
+  <section id="loading" class="screen">
+    <div class="spinner"></div>
+    <p id="loadingText">Connexion…</p>
+  </section>
+
+  <!-- ============ PARTIE ============ -->
+  <section id="game" class="screen">
+    <header class="d-top">
+      <div id="opponents" class="opponents"></div>
+      <button class="btn ghost small quit" data-act="quit" title="Quitter">✕</button>
+    </header>
+
+    <div class="d-middle">
+      <div class="deck-zone">
+        <div id="deck" class="deck"></div>
+        <div id="trumpInfo" class="trump-info"></div>
+      </div>
+      <div id="table" class="table"></div>
+    </div>
+
+    <div class="d-bottom">
+      <div id="status" class="d-status"></div>
+      <div id="actions" class="d-actions"></div>
+      <div id="hand" class="hand"></div>
+      <div id="me" class="me-bar"></div>
+    </div>
+
+    <div id="result" class="overlay hidden"></div>
+  </section>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="../js/vendor/peerjs.min.js"></script>
+  <script src="durak.js"></script>
+</body>
+</html>

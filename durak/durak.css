@@ -1,0 +1,103 @@
+/* ================= Durak ================= */
+.setup.one { grid-template-columns: 1fr; max-width: 420px; margin-left: auto; margin-right: auto; }
+.back-link { margin-top: 18px; }
+.chip .x { margin-left: 6px; background: none; border: none; color: var(--muted); cursor: pointer; font: inherit; }
+
+#game { padding: 8px 10px 10px; gap: 8px; height: 100vh; height: 100dvh; min-height: 0; }
+#game.active { display: flex; flex-direction: column; }
+
+:root { --cw: clamp(48px, 13vw, 78px); }
+.card {
+  position: relative; flex-shrink: 0;
+  width: var(--cw); height: calc(var(--cw) * 1.42); border-radius: calc(var(--cw) * 0.12);
+  background: linear-gradient(160deg, #ffffff, #ecebf3); color: #1b1640;
+  box-shadow: 0 3px 10px rgba(0,0,0,0.45); border: 1px solid rgba(0,0,0,0.15);
+  user-select: none; -webkit-tap-highlight-color: transparent;
+}
+.card.red { color: #d6243f; }
+.card .cr { position: absolute; top: 4%; left: 9%; font-weight: 800; font-size: calc(var(--cw) * 0.3); line-height: 1; }
+.card .cs { position: absolute; top: 28%; left: 9%; font-size: calc(var(--cw) * 0.22); line-height: 1; }
+.card .cbig { position: absolute; right: 8%; bottom: 5%; font-size: calc(var(--cw) * 0.55); line-height: 1; opacity: 0.9; }
+.card.back {
+  background: repeating-linear-gradient(45deg, #5b3fd6 0 6px, #4a31b8 6px 12px);
+  border: 3px solid #fff; color: #fff;
+}
+.card.back .deck-n { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: calc(var(--cw) * 0.32); text-shadow: 0 2px 6px #000; }
+
+/* opponents */
+.d-top { display: flex; align-items: flex-start; gap: 8px; }
+.opponents { flex: 1; display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+.opp {
+  --c: #fff; min-width: 92px; padding: 6px 10px; border-radius: 14px; text-align: center;
+  background: rgba(0,0,0,0.3); border: 2px solid transparent; border-top: 4px solid var(--c);
+  display: flex; flex-direction: column; align-items: center; gap: 1px; font-size: 0.85rem;
+}
+.opp b { max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.opp span { color: var(--muted); font-size: 0.75rem; }
+.opp em { font-style: normal; font-size: 0.75rem; min-height: 1em; color: var(--gold); }
+.opp.def { border-color: rgba(77, 171, 255, 0.7); }
+.opp.att { border-color: rgba(255, 77, 109, 0.7); }
+.opp.out { opacity: 0.45; }
+.backs { display: flex; height: 26px; margin-bottom: 2px; }
+.backs i {
+  width: 17px; height: 25px; border-radius: 3px; margin-left: -9px; border: 1.5px solid #fff;
+  background: repeating-linear-gradient(45deg, #5b3fd6 0 3px, #4a31b8 3px 6px);
+}
+.backs i:first-child { margin-left: 0; }
+.quit { flex-shrink: 0; }
+
+/* middle: deck + table */
+.d-middle { flex: 1; min-height: 0; display: flex; gap: 10px; align-items: center; }
+.deck-zone { display: flex; flex-direction: column; align-items: center; gap: 6px; width: calc(var(--cw) * 1.6); flex-shrink: 0; }
+.deck { position: relative; width: calc(var(--cw) * 1.5); height: calc(var(--cw) * 1.45); }
+.deck .trump-card { position: absolute; left: 30%; top: 2%; transform: rotate(90deg); transform-origin: center; }
+.deck .deck-top { position: absolute; left: 0; top: 0; }
+.trump-info { text-align: center; font-size: 0.8rem; color: var(--muted); }
+.trump-info b { font-size: 1.4rem; color: #fff; }
+.trump-info b.red { color: #ff5a75; }
+.trump-info small { font-size: 0.7rem; }
+
+.table {
+  flex: 1; min-height: calc(var(--cw) * 1.9); align-self: stretch;
+  display: flex; flex-wrap: wrap; align-content: center; justify-content: center; gap: 10px calc(var(--cw) * 0.45);
+  border-radius: 22px; padding: 12px;
+  background: radial-gradient(ellipse at center, rgba(34, 139, 84, 0.45), rgba(12, 60, 40, 0.55));
+  border: 2px solid rgba(255,255,255,0.08);
+}
+.table-empty { color: rgba(255,255,255,0.6); font-weight: 600; }
+.pair { position: relative; width: calc(var(--cw) * 1.3); height: calc(var(--cw) * 1.75); border-radius: 12px; }
+.pair .card { position: absolute; left: 0; top: 0; animation: deal 0.25s ease-out; }
+.pair .card.def-card { left: calc(var(--cw) * 0.3); top: calc(var(--cw) * 0.33); transform: rotate(8deg); }
+.pair.target { cursor: pointer; }
+.pair.target .card:first-child { box-shadow: 0 0 0 4px var(--gold), 0 0 24px var(--gold); animation: pulseT 0.9s infinite alternate; }
+@keyframes pulseT { to { box-shadow: 0 0 0 4px var(--gold), 0 0 6px var(--gold); } }
+@keyframes deal { from { transform: translateY(-30px) scale(0.85); opacity: 0; } }
+
+/* bottom: status, actions, hand */
+.d-bottom { display: flex; flex-direction: column; gap: 8px; }
+.d-status { text-align: center; font-weight: 600; min-height: 1.4em; }
+.d-status small { display: block; color: var(--muted); font-weight: 400; font-size: 0.8rem; margin-top: 2px; }
+.d-actions { display: flex; gap: 10px; justify-content: center; min-height: 46px; }
+.d-actions .btn { font-size: 1.05rem; padding: 0.6em 1.4em; }
+.btn.take { background: linear-gradient(135deg, #ff6b6b, #e03150); border: none; color: #fff; }
+.hand {
+  display: flex; justify-content: center; padding: 18px 6px 4px; overflow-x: auto; min-height: calc(var(--cw) * 1.42 + 24px);
+}
+.hand .card { margin-left: calc(var(--cw) * -0.32); cursor: pointer; transition: transform 0.15s, filter 0.15s; }
+.hand .card:first-child { margin-left: 0; }
+.hand .card.playable { transform: translateY(-10px); box-shadow: 0 0 0 2px var(--gold), 0 6px 16px rgba(0,0,0,0.5); }
+.hand .card.dim { filter: brightness(0.7); }
+.hand .card.selected { transform: translateY(-22px); box-shadow: 0 0 0 4px var(--gold), 0 0 26px var(--gold); }
+.hand .card.is-trump::after { content: '★'; position: absolute; top: 3%; right: 8%; font-size: calc(var(--cw) * 0.18); color: var(--gold2); }
+.me-bar { text-align: center; color: var(--muted); font-size: 0.85rem; }
+
+#result { position: fixed; border-radius: 0; z-index: 20; }
+.finish { text-align: left; display: inline-block; margin: 6px auto 10px; font-weight: 700; }
+
+@media (min-width: 900px) {
+  :root { --cw: 84px; }
+  #game { max-width: 1100px; margin: 0 auto; width: 100%; }
+}
+@media (max-height: 700px) {
+  :root { --cw: clamp(44px, 11vw, 64px); }
+}
