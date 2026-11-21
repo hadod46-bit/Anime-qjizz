@@ -1606,7 +1606,7 @@ const Setup = {
     $('#home').dataset.theme = t;
     $('.logo').innerHTML = t === 'hits' ? 'Blind Test <span>Champion</span>' : t === 'logos' ? 'Logo Quiz <span>Champion</span>' : 'Anime Quiz <span>Champion</span>';
     $('.tagline').textContent = t === 'hits' ? '1 song · 1 buzz · 1 champion' : t === 'logos' ? '1 blurry logo · 1 brand · 1 champion' : t === 'music' ? '1 opening · 1 anime · 1 champion' : '4 pictures · 1 anime · 1 champion';
-    document.title = t === 'hits' ? 'Blind Test Champion — guess the song' : t === 'logos' ? 'Logo Quiz Champion — guess the brand' : 'Anime Quiz Champion — 4 pictures, 1 anime';
+    document.title = 'Couch Clash — ' + (t === 'hits' ? 'Blind Test' : t === 'logos' ? 'Logo Quiz' : t === 'music' ? 'Anime Music Quiz' : 'Anime Quiz');
   },
   setMode(mode) {
     this.mode = mode;

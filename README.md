@@ -1,4 +1,8 @@
-# Anime Quiz Champion 🏆
+# Couch Clash 🛋️⚔️
+
+Casual party games to play with friends: four buzzer quizzes (Anime Quiz Champion, anime music, Blind Test, Logo Quiz) and the card game Durak.
+
+## 🏆 The quizzes
 
 **4 pictures, 1 song or 1 logo**: a party quiz to play with friends on one screen, structured like a TV quiz show
 (Qualifying round → Semi-final → Final).
