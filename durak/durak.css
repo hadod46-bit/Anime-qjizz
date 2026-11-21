@@ -116,3 +116,4 @@
 .variant-select { max-width: 340px; margin: 6px auto 0; display: block; }
 .variant-tag { color: var(--gold); }
 .btn.transfer { background: linear-gradient(135deg, #4dabff, #7c5cff); border: none; color: #fff; }
+.logo span.emoji { display: inline; background: none; -webkit-background-clip: border-box; background-clip: border-box; color: initial; filter: none; }

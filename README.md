@@ -47,7 +47,7 @@ The phones connect directly to each other (WebRTC through [PeerJS](https://peerj
 On GitHub: **Settings → Pages → Deploy from a branch**, then pick this branch and `/ (root)`.
 
 ## 🃏 Durak (card game)
-Open `/durak/`. Dedicated to our Ukrainian friend who taught us the game 💙💛.
+Open `/durak/`. Dedicated to Romana (Романа), our Ukrainian friend who taught us the game 💙💛.
 
 Traditional rules, 36-card deck, two versions chosen by the host in the room:
 - **Podkidnoy (classic):** everyone except the defender can throw in cards of a rank already on the table.
