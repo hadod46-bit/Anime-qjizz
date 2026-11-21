@@ -1330,6 +1330,14 @@ const Net = (() => {
   function onGuest(conn) {
     conn.on('data', msg => {
       if (!msg || typeof msg !== 'object') return;
+      conn.lastSeen = Date.now();
+      const back = conn.pid != null && byId(conn.pid);
+      if (back && back.offline && !back.conn) {   // a silent phone woke up
+        back.offline = false; back.conn = conn;
+        showToast(`✅ ${esc(back.name)} est de retour`, { kind: 'good' });
+        if (G.round && G.round.scores) G.round.scores();
+        touch();
+      }
       if (msg.t === 'hello') {
         const name = String(msg.name || '').trim().slice(0, 16) || 'Invité';
         let p = G.players.find(x => x.offline && x.name.toLowerCase() === name.toLowerCase());
@@ -1359,13 +1367,14 @@ const Net = (() => {
       p.conn = null;
       if (G.inGame) {
         p.offline = true;
-        showToast(`📵 ${esc(p.name)} s'est déconnecté(e)`, { kind: 'bad', ms: 3000 });
+        showToast(`📵 ${esc(p.name)} ne répond plus`, { kind: 'bad', ms: 3000 });
         if (G.round && G.round.scores) G.round.scores();
       } else {
         G.players = G.players.filter(x => x !== p);
       }
       touch();
     };
+    conn.gone = gone;
     conn.on('close', gone);
     conn.on('error', gone);
   }
@@ -1392,6 +1401,7 @@ const Net = (() => {
         conn.on('open', () => conn.send({ t: 'hello', name }));
         conn.on('data', msg => {
           if (!msg || typeof msg !== 'object') return;
+          G.lastHost = Date.now();
           if (msg.t === 'welcome') {
             welcomed = true; done = true; clearTimeout(to);
             G.peer = peer; G.hostConn = conn; G.me = msg.id;
@@ -1469,6 +1479,26 @@ function shareRoom() {
   else if (navigator.clipboard) navigator.clipboard.writeText(url).then(() => showToast('Lien copié ! Envoie-le à ton ami.', { kind: 'good' }));
   else prompt('Copie ce lien :', url);
 }
+
+/* ---------- Heartbeat: notice phones that went silent (locked screen, lost network…) ---------- */
+let hbLast = Date.now();
+setInterval(() => {
+  const now = Date.now(), frozen = now - hbLast > 6000;   // this page itself was asleep: don't blame the others
+  hbLast = now;
+  if (G.online && G.isHost) {
+    G.players.forEach(p => {
+      const c = p.conn;
+      if (!c) return;
+      if (frozen) c.lastSeen = now;
+      try { if (c.open) c.send({ t: 'ping' }); } catch (e) { /* ignore */ }
+      if (now - (c.lastSeen || now) > 9000 && G.inGame && !p.offline) c.gone && c.gone();
+    });
+  } else if (G.online && G.hostConn) {
+    if (frozen) G.lastHost = now;
+    try { if (G.hostConn.open) G.hostConn.send({ t: 'ping' }); } catch (e) { /* ignore */ }
+    if (now - (G.lastHost || now) > 10000 && now - (G.warnedHost || 0) > 10000) { G.warnedHost = now; showToast('⏳ L\'hôte ne répond plus… (son téléphone est peut-être en veille)', { kind: 'bad', ms: 4000 }); }
+  }
+}, 2000);
 
 /* keep the phone screen on during a game */
 let wakeLock = null;

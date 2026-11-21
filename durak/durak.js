@@ -400,6 +400,7 @@
     let status;
     if (g.phase === 'over') status = '';
     else if (meSeat.out) status = '🏁 Tu es sorti. Regarde la fin de la partie !';
+    else if (v.me === g.defender && !g.table.length) status = `🛡️ ${esc(P(g.attacker).name)} va t'attaquer… prépare ta défense !`;
     else if (v.me === g.defender) status = g.taking ? '🫴 Tu prends les cartes… (les autres peuvent encore en ajouter)' : unbeatenCount(g) ? (selected ? '👉 Touche la carte à battre' : '🛡️ Défends-toi ! Choisis une carte, ou prends.') : '✅ Tout est battu, attends les autres…';
     else if (!g.table.length && v.me === g.attacker) status = '⚔️ À toi d\'attaquer : pose une carte !';
     else if (!g.table.length) status = `${esc(P(g.attacker).name)} attaque ${esc(P(g.defender).name)}…`;
@@ -560,6 +561,13 @@
     const refuse = msg => { conn.send({ t: 'error', msg }); setTimeout(() => conn.close(), 800); };
     conn.on('data', msg => {
       if (!msg || typeof msg !== 'object') return;
+      conn.lastSeen = Date.now();
+      const back = conn.pid != null && byId(conn.pid);
+      if (back && back.offline && !back.conn) {   // a silent phone woke up: give its cards back
+        back.offline = false; back.conn = conn;
+        toast(`✅ ${esc(back.name)} est de retour`);
+        update();
+      }
       if (msg.t === 'hello') {
         const name = String(msg.name || '').trim().slice(0, 16) || 'Invité';
         let p = G.players.find(x => x.offline && !x.bot && x.name.toLowerCase() === name.toLowerCase());
@@ -581,10 +589,11 @@
       const p = G.players.find(x => x.conn === conn);
       if (!p) return;
       p.conn = null;
-      if (G.game && G.game.phase === 'play') { p.offline = true; toast(`📵 ${esc(p.name)} s'est déconnecté (un bot joue à sa place)`); }
+      if (G.game && G.game.phase === 'play') { p.offline = true; toast(`📵 ${esc(p.name)} ne répond plus (un bot joue à sa place)`); }
       else G.players = G.players.filter(x => x !== p);
       update();
     };
+    conn.gone = gone;
     conn.on('close', gone); conn.on('error', gone);
   }
 
@@ -605,6 +614,7 @@
       conn.on('open', () => conn.send({ t: 'hello', name }));
       conn.on('data', msg => {
         if (!msg || typeof msg !== 'object') return;
+        G.lastHost = Date.now();
         if (msg.t === 'welcome') { welcomed = true; done = true; clearTimeout(to); G.peer = peer; G.hostConn = conn; G.me = msg.id; }
         else if (msg.t === 'error') fail(msg.msg);
         else if (msg.t === 'view' && welcomed) render(msg.v);
@@ -612,6 +622,27 @@
       conn.on('close', () => { if (welcomed && G.hostConn === conn) leave('Connexion perdue avec l\'hôte.'); });
     });
   }
+
+
+  /* ---------- Heartbeat: notice phones that went silent (locked screen, lost network…) ---------- */
+  let hbLast = Date.now();
+  setInterval(() => {
+    const now = Date.now(), frozen = now - hbLast > 6000;   // this page itself was asleep: don't blame the others
+    hbLast = now;
+    if (G.online && G.isHost) {
+      G.players.forEach(p => {
+        const c = p.conn;
+        if (!c) return;
+        if (frozen) c.lastSeen = now;
+        try { if (c.open) c.send({ t: 'ping' }); } catch (e) { /* ignore */ }
+        if (now - (c.lastSeen || now) > 9000 && G.game && G.game.phase === 'play' && !p.offline) c.gone && c.gone();
+      });
+    } else if (G.online && G.hostConn) {
+      if (frozen) G.lastHost = now;
+      try { if (G.hostConn.open) G.hostConn.send({ t: 'ping' }); } catch (e) { /* ignore */ }
+      if (now - (G.lastHost || now) > 10000 && now - (G.warnedHost || 0) > 10000) { G.warnedHost = now; toast('⏳ L\'hôte ne répond plus… (son téléphone est peut-être en veille)'); }
+    }
+  }, 2000);
 
   /* ---------------- Wiring ---------------- */
   $('#hostBtn').onclick = () => { tone(1, 0.01, 'sine', 0.0001); hostRoom(); };
