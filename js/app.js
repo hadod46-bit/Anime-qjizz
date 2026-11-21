@@ -39,7 +39,7 @@ const G = {
   gen: 0,              // incremented on quit, cancels pending async work
   timers: new Set(),
   timerRef: null,      // timer shown in the timer bar (host)
-  override: null,      // {id, fn} for the "C'était bon !" button
+  override: null,      // {id, fn} for the "I was right!" button
   handlers: {},        // host-side button handlers: {action: {fn, who}}
   view: freshView(),
   // network
@@ -53,7 +53,7 @@ const G = {
 };
 const byId = id => G.players.find(p => p.id === id);
 const activePlayers = () => G.players.filter(p => !p.eliminated);
-const plural = (n, w) => `${n} ${w}${n > 1 ? 's' : ''}`;
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
 /* ---------------- Sound (WebAudio, no files) ---------------- */
 const Sound = (() => {
@@ -157,7 +157,7 @@ const ui = {
 const isMusic = () => G.settings.theme === 'music' || G.settings.theme === 'hits';
 const isHits = () => G.settings.theme === 'hits';
 const isLogos = () => G.settings.theme === 'logos';
-const answerHint = () => (isHits() ? 'Titre ou artiste…' : isLogos() ? 'Nom de la marque…' : "Nom de l'animé…");
+const answerHint = () => (isHits() ? 'Title or artist…' : isLogos() ? 'Brand name…' : 'Anime name…');
 const EXTRA = () => (isMusic() ? 10000 : 0);   // music quiz: +10 s on the clocks
 const themeLabel = a => a.label || `${a.type === 'OP' ? 'Opening' : 'Ending'}${a.seq > 1 ? ' ' + a.seq : ''}`;
 
@@ -215,14 +215,14 @@ function revealObj(q, msg, kind, nextLabel) {
   const romaji = media.title.romaji && media.title.romaji !== media.display ? media.title.romaji : '';
   const cover = (media.coverImage && (media.coverImage.large || media.coverImage.extraLarge)) || '';
   const song = media.year ? `📅 ${media.year} · ${esc(media.styleLabel || '')}`
-    : q.audio ? `🎵 ${themeLabel(q.audio)}${q.audio.song ? ` · « ${esc(q.audio.song)} »` : ''}`
+    : q.audio ? `🎵 ${themeLabel(q.audio)}${q.audio.song ? ` · “${esc(q.audio.song)}”` : ''}`
     : media.catLabel ? `🏷️ ${esc(media.catLabel)}` : '';
   return { msg, kind, title: media.display, sub: romaji, song, cover, next: nextLabel ? { label: nextLabel, who: 'any' } : null };
 }
 
 async function loadQuestion() {
   const gen = G.gen;
-  ui.status('<span class="dots">Chargement de la question</span>');
+  ui.status('<span class="dots">Loading the question</span>');
   try {
     const q = await G.bank.next();
     if (gen !== G.gen) return undefined; // cancelled
@@ -264,29 +264,29 @@ function handleAction(pid, a, v) {
 }
 
 /* ==========================================================
-   ROUND 1 — Préliminaire : 9 points gagnants (QCM + buzzer)
+   ROUND 1 — Qualifying round: first to 9 points (multiple choice + buzzer)
    ========================================================== */
 const Prelim = {
-  step: 'Manche 1',
-  title: 'Préliminaire',
-  subtitle: '9 points gagnants',
+  step: 'Round 1',
+  title: 'Qualifying round',
+  subtitle: 'First to 9 points',
   canSkip: true,
   get rules() {
     return [
-    isLogos() ? 'Un logo apparaît flou et devient net petit à petit : buzzez dès que vous reconnaissez la marque !'
-      : isHits() ? 'Une chanson passe : buzzez dès que vous la reconnaissez !'
-      : isMusic() ? 'Un opening ou un ending passe : buzzez dès que vous reconnaissez l\'animé !' : '4 images, 1 animé : buzzez dès que vous avez trouvé !',
-    `${(20000 + EXTRA()) / 1000} secondes par question. Le buzz arrête le chrono${isMusic() ? ' et la musique' : ''} pour tout le monde.`,
-    'Après le buzz, 4 propositions apparaissent pour celui qui a buzzé : 8 secondes pour choisir.',
-    'Questions 1-3 : 1 point · 4-6 : 2 points · ensuite : 3 points.',
-    'Mauvaise réponse = vous êtes bloqué, les autres peuvent buzzer.',
-    'Premier à 9 points = qualifié (et +1 point bonus en finale).',
+    isLogos() ? 'A blurred logo appears and slowly gets sharper: buzz as soon as you recognise the brand!'
+      : isHits() ? 'A song plays: buzz as soon as you recognise it!'
+      : isMusic() ? 'An anime opening or ending plays: buzz as soon as you recognise the anime!' : '4 pictures, 1 anime: buzz as soon as you know it!',
+    `${(20000 + EXTRA()) / 1000} seconds per question. A buzz stops the clock${isMusic() ? ' and the music' : ''} for everyone.`,
+    'After a buzz, 4 choices appear for the player who buzzed: 8 seconds to pick one.',
+    'Questions 1-3: 1 point · 4-6: 2 points · after that: 3 points.',
+    'Wrong answer = you are locked out, the others can buzz.',
+    'First to 9 points qualifies (and starts the final with +1 point).',
     ];
   },
   extraRules() {
     const n = activePlayers().length, q = prelimQualifiers(n);
-    if (n <= 2) return ['Le premier à 9 points gagne +1 point d\'avance, puis place directement à la finale !'];
-    return [`À ${n} joueurs : les ${q} premiers à 9 points sont qualifiés pour ${q === 2 ? 'la finale (pas de demi-finale)' : 'la demi-finale'}, les autres sont éliminés.`];
+    if (n <= 2) return ['The first to 9 points gets a +1 point head start, then it\'s straight to the final!'];
+    return [`With ${n} players: the first ${q} to reach 9 points go through to ${q === 2 ? 'the final (no semi-final)' : 'the semi-final'}, the others are knocked out.`];
   },
 
   begin() {
@@ -303,7 +303,7 @@ const Prelim = {
     ui.scores(this.players.map(p => ({
       id: p.id,
       score: `${p.r1}<small> / 9</small>`,
-      badge: p.qualified ? 'Qualifié ✔' : this.locked.has(p.id) ? 'Bloqué' : '',
+      badge: p.qualified ? 'Qualified ✔' : this.locked.has(p.id) ? 'Locked' : '',
       cls: [p.qualified && 'qualified', this.locked.has(p.id) && 'locked', this.buzzer === p && 'buzzed'].filter(Boolean),
     })));
     ui.buzz(this.state === 'open', this.players.filter(p => this.eligible(p)).map(p => p.id));
@@ -345,7 +345,7 @@ const Prelim = {
     ui.qInfo(`Question ${this.qCount} · <b>${plural(this.value, 'point')}</b>`);
     this.state = 'open';
     this.panel();
-    ui.status('Buzzez quand vous avez trouvé !');
+    ui.status('Buzz when you know it!');
     this.scores();
     this.qTimer = new Timer(20000 + EXTRA(), () => this.timeUp()).start();
     ui.timer(this.qTimer, 'q');
@@ -364,7 +364,7 @@ const Prelim = {
     this.qTimer.pause();
     if (this.lvTimer) this.lvTimer.pause();
     Track.pause();
-    ui.status(`✋ <b style="color:${p.color}">${esc(p.name)}</b> a buzzé ! Choix de la réponse…`);
+    ui.status(`✋ <b style="color:${p.color}">${esc(p.name)}</b> buzzed! Choosing an answer…`);
     this.aTimer = new Timer(8000, () => this.wrong(null)).start();
     ui.timer(this.aTimer, 'answer');
     this.panel(); this.scores();
@@ -386,8 +386,8 @@ const Prelim = {
     Track.play();
     if (this.q.logo) showQ(this.q, 4);
     const done = this.isOver();
-    ui.status(p.qualified && !done ? `<b>${esc(p.name)}</b> est qualifié(e) !` : '');
-    this.panel(revealObj(this.q, `✔ ${esc(p.name)} +${plural(this.value, 'point')}`, 'good', done ? 'Résultats' : 'Question suivante'));
+    ui.status(p.qualified && !done ? `<b>${esc(p.name)}</b> qualifies!` : '');
+    this.panel(revealObj(this.q, `✔ ${esc(p.name)} +${plural(this.value, 'point')}`, 'good', done ? 'Results' : 'Next question'));
     on('next', () => done ? this.end() : this.next());
     this.scores();
   },
@@ -397,21 +397,21 @@ const Prelim = {
     this.locked.add(p.id);
     if (i != null) this.wrongChoices.add(i);
     this.buzzer = null;
-    ui.toast(i == null ? `⏱ ${esc(p.name)} trop lent !` : `✘ Mauvaise réponse pour ${esc(p.name)}`, { kind: 'bad' });
+    ui.toast(i == null ? `⏱ ${esc(p.name)} was too slow!` : `✘ Wrong answer from ${esc(p.name)}`, { kind: 'bad' });
     if (this.players.some(x => this.eligible(x))) {
       this.state = 'open';
-      ui.status('Les autres peuvent encore buzzer !');
+      ui.status('The others can still buzz!');
       this.qTimer.start();
       if (this.lvTimer) this.lvTimer.start();
       Track.play();
       ui.timer(this.qTimer, 'q');
       this.panel(); this.scores();
     } else {
-      this.reveal('Personne n\'a trouvé…');
+      this.reveal('Nobody got it…');
     }
   },
-  timeUp() { if (this.state === 'open') this.reveal('⏱ Temps écoulé !'); },
-  skip() { if (this.state === 'open' || this.state === 'answering') this.reveal('Question passée'); },
+  timeUp() { if (this.state === 'open') this.reveal('⏱ Time\'s up!'); },
+  skip() { if (this.state === 'open' || this.state === 'answering') this.reveal('Question skipped'); },
   reveal(msg) {
     this.stopTimers();
     this.state = 'reveal';
@@ -419,7 +419,7 @@ const Prelim = {
     Track.play();
     if (this.q.logo) showQ(this.q, 4);
     ui.status('');
-    this.panel(revealObj(this.q, msg, 'neutral', 'Question suivante'));
+    this.panel(revealObj(this.q, msg, 'neutral', 'Next question'));
     on('next', () => this.next());
     this.scores();
   },
@@ -441,37 +441,37 @@ const Prelim = {
     winner.bonus += 1;
     const toFinal = activePlayers().length <= 2;   // only 2 left: no demi-finale
     showRoundEnd({
-      step: this.step, title: 'Résultats du préliminaire',
-      rows: ranking.map(p => [p, `${p.r1} pts`, p.eliminated ? '<span class="out">Éliminé(e)</span>' : p.qualified ? 'Qualifié(e) ✔' : 'Repêché(e)']),
-      msg: [reason, `${esc(winner.name)} gagne <b>+1 point</b> d'avance pour la finale.`,
-        out.length ? `${nameList(out)} ${out.length > 1 ? 'sont éliminés' : 'est éliminé(e)'}. Merci d'avoir joué !` : '',
-        toFinal ? 'Plus que 2 joueurs : <b>direction la finale !</b>' : ''].filter(Boolean).join('<br>'),
+      step: this.step, title: 'Qualifying round results',
+      rows: ranking.map(p => [p, `${p.r1} pts`, p.eliminated ? '<span class="out">Knocked out</span>' : p.qualified ? 'Qualified ✔' : 'Through']),
+      msg: [reason, `${esc(winner.name)} gets a <b>+1 point</b> head start for the final.`,
+        out.length ? `${nameList(out)} ${out.length > 1 ? 'are' : 'is'} knocked out. Thanks for playing!` : '',
+        toFinal ? 'Only 2 players left: <b>straight to the final!</b>' : ''].filter(Boolean).join('<br>'),
       next: toFinal ? Final : Semi,
     });
   },
 };
 
 /* ==========================================================
-   ROUND 2 — Demi-finale : 4 à la suite (réponses tapées, chrono)
+   ROUND 2 — Semi-final: 4 in a row (typed answers, clock)
    ========================================================== */
 const Semi = {
-  step: 'Manche 2',
-  title: 'Demi-finale',
-  subtitle: '4 à la suite',
+  step: 'Round 2',
+  title: 'Semi-final',
+  subtitle: '4 in a row',
   canSkip: false,
   get rules() {
     return [
-    `Chacun son tour : ${(60000 + EXTRA()) / 1000} secondes au chrono.`,
-    isLogos() ? 'Un logo apparaît : tape le nom de la marque (les petites fautes passent).'
-      : isHits() ? 'Une chanson passe : tape son titre OU le nom de l\'artiste (les petites fautes passent).'
-      : (isMusic() ? 'Une musique passe : tape' : 'Tape') + ' le nom de l\'animé (anglais ou japonais, les petites fautes passent).',
-    'Objectif : 4 bonnes réponses d\'affilée. Erreur ou « Passer » = série remise à zéro.',
-    'Classement : meilleure série, puis temps restant, puis nombre de bonnes réponses.',
-    'Le vainqueur gagne +2 points d\'avance en finale.',
+    `One player at a time: ${(60000 + EXTRA()) / 1000} seconds on the clock.`,
+    isLogos() ? 'A logo appears: type the brand name (small typos are OK).'
+      : isHits() ? 'A song plays: type its title OR the artist (small typos are OK).'
+      : (isMusic() ? 'A song plays: type' : 'Type') + ' the anime name (English or Japanese, small typos are OK).',
+    'Goal: 4 right answers in a row. A mistake or “Skip” resets your streak.',
+    'Ranking: best streak, then time left, then number of right answers.',
+    'The winner starts the final with a +2 point head start.',
     ];
   },
   extraRules() {
-    return activePlayers().length > 2 ? ['Les 2 meilleurs vont en finale, les autres sont éliminés.'] : [];
+    return activePlayers().length > 2 ? ['The best 2 go to the final, the others are knocked out.'] : [];
   },
 
   begin() {
@@ -486,7 +486,7 @@ const Semi = {
     ui.scores(this.players.map(p => ({
       id: p.id,
       score: `${p.r2.best}<small> / 4</small>`,
-      badge: p === this.cur && !p.r2.done ? 'À toi !' : p.r2.done ? 'Terminé' : 'En attente',
+      badge: p === this.cur && !p.r2.done ? 'Your turn!' : p.r2.done ? 'Done' : 'Waiting',
       cls: [p === this.cur && !p.r2.done && 'buzzed', p.r2.done && 'done'].filter(Boolean),
     })));
   },
@@ -510,13 +510,13 @@ const Semi = {
     this.q = null;
     Track.stop();
     showQ(null); ui.timer(null); ui.status(''); ui.panel({});
-    ui.qInfo(`Joueur ${this.turn + 1} / ${this.players.length}`);
+    ui.qInfo(`Player ${this.turn + 1} / ${this.players.length}`);
     this.scores();
     ui.overlay({
       html: `<h3 style="color:${this.cur.color}">${esc(this.cur.name)}</h3>
-        <p>${(60000 + EXTRA()) / 1000} secondes pour enchaîner <b>4 bonnes réponses</b> d'affilée.</p>
-        <p class="small">Les autres : pas de souffle 🤫</p>`,
-      btn: { label: 'Je suis prêt(e) !', a: 'ready', who: this.cur.id },
+        <p>${(60000 + EXTRA()) / 1000} seconds to get <b>4 right answers</b> in a row.</p>
+        <p class="small">Everyone else: no whispering 🤫</p>`,
+      btn: { label: "I'm ready!", a: 'ready', who: this.cur.id },
       waitFor: this.cur.name,
     });
     on('ready', () => this.startTurn(), this.cur.id);
@@ -540,7 +540,7 @@ const Semi = {
     this.qKey = q.media.id;
     showQ(q, 4);
     Track.load(q); Track.play();
-    ui.status(`Au tour de <b style="color:${this.cur.color}">${esc(this.cur.name)}</b> : ${isHits() ? 'quelle est cette chanson' : isLogos() ? 'quelle est cette marque' : 'quel est cet animé'} ?`);
+    ui.status(`<b style="color:${this.cur.color}">${esc(this.cur.name)}</b>'s turn: ${isHits() ? 'what is this song' : isLogos() ? 'what is this brand' : 'what is this anime'}?`);
     this.state = 'open';
     this.panel();
     this.chrono.start();
@@ -556,13 +556,13 @@ const Semi = {
       ui.sound('good'); ui.flash('good');
       r.streak++; r.correct++; r.best = Math.max(r.best, r.streak);
       ui.toast(`✔ ${esc(media.display)}`, { kind: 'good', ms: 1300 });
-      if (r.streak >= 4) { r.timeLeft = this.chrono.liveLeft(); return this.finishTurn('🔥 4 à la suite !'); }
+      if (r.streak >= 4) { r.timeLeft = this.chrono.liveLeft(); return this.finishTurn('🔥 4 in a row!'); }
     } else {
       ui.sound('bad'); ui.flash('bad');
       const prev = r.streak;
       r.streak = 0;
       if (text == null) {
-        ui.toast(`Passé — c'était <b>${esc(media.display)}</b>`, { ms: 2500 });
+        ui.toast(`Skipped: it was <b>${esc(media.display)}</b>`, { ms: 2500 });
       } else {
         const id = ++G.view.n;
         G.override = {
@@ -570,19 +570,19 @@ const Semi = {
             if (this.cur !== p || r.done) return;
             r.streak = prev + 1; r.correct++; r.best = Math.max(r.best, r.streak);
             ui.sound('good');
-            if (r.streak >= 4) { r.timeLeft = this.chrono.liveLeft(); return this.finishTurn('🔥 4 à la suite !'); }
+            if (r.streak >= 4) { r.timeLeft = this.chrono.liveLeft(); return this.finishTurn('🔥 4 in a row!'); }
             this.panel(); this.scores();
           },
         };
-        ui.toast(`✘ « ${esc(text)} » — c'était <b>${esc(media.display)}</b>`, {
-          kind: 'bad', ms: 4000, action: { label: "C'était bon !", v: id },
+        ui.toast(`✘ “${esc(text)}”: it was <b>${esc(media.display)}</b>`, {
+          kind: 'bad', ms: 4000, action: { label: 'I was right!', v: id },
         });
       }
     }
     this.scores();
     this.next();
   },
-  timeUp() { if (this.state === 'open' || this.state === 'loading') this.finishTurn('⏱ Temps écoulé !'); },
+  timeUp() { if (this.state === 'open' || this.state === 'loading') this.finishTurn('⏱ Time\'s up!'); },
   finishTurn(msg) {
     const p = this.cur, r = p.r2;
     const pending = this.state === 'open' && this.q && !msg.startsWith('🔥') ? this.q.media : null;
@@ -598,10 +598,10 @@ const Semi = {
     const last = this.turn === this.players.length - 1;
     ui.overlay({
       html: `<h3>${msg}</h3>
-        <p><b style="color:${p.color}">${esc(p.name)}</b> : meilleure série <b>${r.best}/4</b> · ${plural(r.correct, 'bonne réponse')}</p>
-        ${r.best >= 4 ? `<p class="small">Il restait ${Math.ceil(r.timeLeft / 1000)} s au chrono</p>` : ''}
-        ${pending ? `<p class="small">La dernière question était : <b>${esc(pending.display)}</b></p>` : ''}`,
-      btn: { label: last ? 'Résultats' : 'Joueur suivant', a: 'ready', who: 'any' },
+        <p><b style="color:${p.color}">${esc(p.name)}</b>: best streak <b>${r.best}/4</b> · ${plural(r.correct, 'right answer')}</p>
+        ${r.best >= 4 ? `<p class="small">${Math.ceil(r.timeLeft / 1000)} s left on the clock</p>` : ''}
+        ${pending ? `<p class="small">The last question was: <b>${esc(pending.display)}</b></p>` : ''}`,
+      btn: { label: last ? 'Results' : 'Next player', a: 'ready', who: 'any' },
     });
     on('ready', () => { ui.overlay(null); this.nextTurn(); });
   },
@@ -615,44 +615,44 @@ const Semi = {
     winner.bonus += 2;
     this.cur = null;
     showRoundEnd({
-      step: this.step, title: 'Résultats de la demi-finale',
-      rows: ranking.map(p => [p, `série ${p.r2.best}/4 · ${p.r2.correct} ✔`, p.eliminated ? '<span class="out">Éliminé(e)</span>' : 'Finaliste ✔']),
-      msg: [`${esc(winner.name)} gagne <b>+2 points</b> d'avance pour la finale.`,
-        out.length ? `${nameList(out)} ${out.length > 1 ? 'sont éliminés' : 'est éliminé(e)'}.` : ''].filter(Boolean).join('<br>'),
+      step: this.step, title: 'Semi-final results',
+      rows: ranking.map(p => [p, `streak ${p.r2.best}/4 · ${p.r2.correct} ✔`, p.eliminated ? '<span class="out">Knocked out</span>' : 'Finalist ✔']),
+      msg: [`${esc(winner.name)} gets a <b>+2 point</b> head start for the final.`,
+        out.length ? `${nameList(out)} ${out.length > 1 ? 'are' : 'is'} knocked out.` : ''].filter(Boolean).join('<br>'),
       next: Final,
     });
   },
 };
 
 /* ==========================================================
-   ROUND 3 — Finale : face à face (images révélées une à une)
+   ROUND 3 — Final: head to head (pictures revealed one by one)
    ========================================================== */
 const Final = {
-  step: 'Manche 3',
-  title: 'La Finale',
-  subtitle: 'Face à face',
+  step: 'Round 3',
+  title: 'The Final',
+  subtitle: 'Head to head',
   canSkip: true,
   get rules() {
     return [
       ...(isMusic() ? [
-        'La musique démarre : plus tu buzzes tôt, plus ça rapporte.',
+        'The music starts: the sooner you buzz, the more you score.',
         '0-8 s = 4 pts · 8-16 s = 3 pts · 16-24 s = 2 pts · 24-33 s = 1 pt.',
-        'Le buzz arrête la musique et le chrono pour tout le monde.',
+        'A buzz stops the music and the clock for everyone.',
       ] : isLogos() ? [
-        'Le logo apparaît très flou, puis devient plus net toutes les 5 secondes.',
-        'Très flou = 4 pts · flou = 3 pts · presque net = 2 pts · net = 1 pt.',
+        'The logo starts very blurry, then gets sharper every 5 seconds.',
+        'Very blurry = 4 pts · blurry = 3 pts · almost sharp = 2 pts · sharp = 1 pt.',
       ] : [
-        'Les images apparaissent une par une, toutes les 5 secondes.',
-        'Buzz avec 1 image = 4 pts · 2 images = 3 pts · 3 images = 2 pts · 4 images = 1 pt.',
+        'The pictures appear one by one, every 5 seconds.',
+        'Buzz with 1 picture = 4 pts · 2 pictures = 3 pts · 3 pictures = 2 pts · 4 pictures = 1 pt.',
       ]),
-      'Après le buzz : 15 secondes pour taper la réponse.',
-      'Mauvaise réponse = bloqué, l\'adversaire peut tenter sa chance.',
-      `Le premier à ${G.settings.target} points est sacré champion !`,
+      'After a buzz: 15 seconds to type your answer.',
+      'Wrong answer = locked out, your opponent gets a chance.',
+      `The first to ${G.settings.target} points is crowned champion!`,
     ];
   },
   extraRules() {
-    const b = activePlayers().filter(p => p.bonus).map(p => `${p.name} commence avec ${plural(p.bonus, 'point')}`);
-    return b.length ? ['Avances : ' + b.join(' · ')] : [];
+    const b = activePlayers().filter(p => p.bonus).map(p => `${p.name} starts with ${plural(p.bonus, 'point')}`);
+    return b.length ? ['Head starts: ' + b.join(' · ')] : [];
   },
 
   begin() {
@@ -668,7 +668,7 @@ const Final = {
     ui.scores(this.players.map(p => ({
       id: p.id,
       score: `${p.r3}<small> / ${this.target}</small>`,
-      badge: this.locked.has(p.id) ? 'Bloqué' : '',
+      badge: this.locked.has(p.id) ? 'Locked' : '',
       cls: [this.locked.has(p.id) && 'locked', this.buzzer === p && 'buzzed'].filter(Boolean),
     })));
     ui.buzz(this.state === 'open', this.players.filter(p => this.eligible(p)).map(p => p.id));
@@ -696,7 +696,7 @@ const Final = {
     this.qCount++;
     this.revealed = 0;
     this.state = 'open';
-    ui.status('Buzzez ! Plus tôt = plus de points');
+    ui.status('Buzz! Sooner = more points');
     this.revealNext();
     this.scores();
   },
@@ -713,12 +713,12 @@ const Final = {
     const ms = this.q.audio ? (this.revealed < 4 ? 8000 : 9000) : (this.revealed < 4 ? 5000 : 8000);
     this.step = new Timer(ms, () => {
       if (this.revealed < 4) this.revealNext();
-      else this.reveal('⏱ Personne n\'a trouvé…');
+      else this.reveal('⏱ Nobody got it…');
     }).start();
     ui.timer(this.step, 'q');
   },
   updateInfo() {
-    ui.qInfo(`Question ${this.qCount} · ${this.q.audio ? '' : this.q.logo ? `netteté ${this.revealed}/4 · ` : plural(this.revealed, 'image') + ' · '}<b>${plural(this.value(), 'point')}</b>`);
+    ui.qInfo(`Question ${this.qCount} · ${this.q.audio ? '' : this.q.logo ? `sharpness ${this.revealed}/4 · ` : plural(this.revealed, 'picture') + ' · '}<b>${plural(this.value(), 'point')}</b>`);
   },
   onBuzz(p) {
     if (this.state !== 'open' || !this.eligible(p)) return;
@@ -728,7 +728,7 @@ const Final = {
     this.buzzValue = this.value();
     this.step.pause();
     Track.pause();
-    ui.status(`<b style="color:${p.color}">${esc(p.name)}</b> buzze pour <b>${plural(this.buzzValue, 'point')}</b> !`);
+    ui.status(`<b style="color:${p.color}">${esc(p.name)}</b> buzzes for <b>${plural(this.buzzValue, 'point')}</b>!`);
     ui.panel({ input: { for: p.id, name: p.name, placeholder: answerHint(), pass: false, enabled: true, key: `f${this.qCount}-${p.id}` } });
     this.aTimer = new Timer(15000, () => this.answer('', null, true)).start();
     ui.timer(this.aTimer, 'answer');
@@ -747,19 +747,19 @@ const Final = {
     if (text && text.trim()) {
       const id = ++G.view.n;
       G.override = { id, fn: () => { if (!this.awarded && this.q.media === media) this.correct(p, v); } };
-      ui.toast(`✘ ${esc(p.name)} : « ${esc(text)} » refusé`, { kind: 'bad', ms: 4500, action: { label: "C'était bon !", v: id } });
+      ui.toast(`✘ ${esc(p.name)}: “${esc(text)}” is wrong`, { kind: 'bad', ms: 4500, action: { label: 'I was right!', v: id } });
     } else {
       ui.toast(`⏱ ${esc(p.name)} trop lent !`, { kind: 'bad' });
     }
     if (this.players.some(x => this.eligible(x))) {
       this.state = 'open';
-      ui.status('À l\'adversaire de tenter sa chance !');
+      ui.status('Your opponent gets a chance!');
       this.step.start();
       Track.play();
       ui.timer(this.step, 'q');
       this.scores();
     } else {
-      this.reveal('Personne n\'a trouvé…');
+      this.reveal('Nobody got it…');
     }
   },
   correct(p, v) {
@@ -773,7 +773,7 @@ const Final = {
     Track.play();
     ui.status('');
     const won = p.r3 >= this.target;
-    ui.panel({ reveal: revealObj(this.q, `✔ ${esc(p.name)} +${plural(v, 'point')}`, 'good', won ? '🏆 Voir le champion' : 'Question suivante') });
+    ui.panel({ reveal: revealObj(this.q, `✔ ${esc(p.name)} +${plural(v, 'point')}`, 'good', won ? '🏆 See the champion' : 'Next question') });
     on('next', () => won ? this.end(p) : this.next());
     this.scores();
   },
@@ -784,11 +784,11 @@ const Final = {
     showQ(this.q, 4);
     Track.play();
     ui.status('');
-    ui.panel({ reveal: revealObj(this.q, msg, 'neutral', 'Question suivante') });
+    ui.panel({ reveal: revealObj(this.q, msg, 'neutral', 'Next question') });
     on('next', () => this.next());
     this.scores();
   },
-  skip() { if (this.state === 'open' || this.state === 'answering') this.reveal('Question passée'); },
+  skip() { if (this.state === 'open' || this.state === 'answering') this.reveal('Question skipped'); },
   stopTimers() { if (this.step) this.step.stop(); if (this.aTimer) this.aTimer.stop(); },
   end(p) {
     this.stopTimers();
@@ -832,7 +832,7 @@ function showRoundEnd({ step, title, rows, msg, next }) {
   G.view.end = {
     step, title, msg,
     rows: rows.map(([p, score, status]) => ({ id: p.id, score, status, elim: !!p.eliminated })),
-    nextLabel: next === Final ? 'Place à la finale !' : 'Manche suivante',
+    nextLabel: next === Final ? 'On to the final!' : 'Next round',
   };
   on('endNext', () => showIntro(next), 'host');
   ui.screen('roundEnd');
@@ -870,12 +870,12 @@ async function startGame() {
   };
   localStorage.setItem('aqc-settings', JSON.stringify(G.settings));
   if (!G.online) {
-    const names = Setup.names.map((n, i) => (n || '').trim() || `Joueur ${i + 1}`);
+    const names = Setup.names.map((n, i) => (n || '').trim() || `Player ${i + 1}`);
     localStorage.setItem('aqc-names', JSON.stringify(names));
     G.players = names.map((name, i) => ({ id: i, name, color: COLORS[i], key: KEYS[i] }));
   } else {
     G.players = G.players.filter(p => !p.offline);
-    if (G.players.length < 2) { G.view.lobby.error = 'Il faut au moins 2 joueurs connectés.'; ui.screen('lobby'); return; }
+    if (G.players.length < 2) { G.view.lobby.error = 'You need at least 2 connected players.'; ui.screen('lobby'); return; }
   }
   G.players.forEach(p => Object.assign(p, { eliminated: false, bonus: 0, r1: 0, r2: null, r3: 0, qualified: false }));
   G.inGame = true;
@@ -884,29 +884,29 @@ async function startGame() {
   keepAwake();
 
   const gen = ++G.gen;
-  G.view.loading = isHits() ? 'Recherche des chansons…' : isLogos() ? 'Chargement des logos…' : 'Chargement des animés depuis AniList…';
+  G.view.loading = isHits() ? 'Finding songs…' : isLogos() ? 'Loading logos…' : 'Loading anime from AniList…';
   ui.screen('loading');
   try {
     let pool;
     if (isLogos()) {
       await Logos.load();
       pool = Logos.pool(G.settings.cats);
-      if (pool.length < 12) throw new Error(`Seulement ${pool.length} logos avec ces catégories : coche-en plus.`);
+      if (pool.length < 12) throw new Error(`Only ${pool.length} logos in these categories: tick more of them.`);
     } else if (isHits()) {
       pool = Hits.pool(G.settings.decades, G.settings.styles);
       if (G.settings.styles.includes('chaabi')) {
-        G.view.loading = 'Recherche du chaabi marocain 🇲🇦…'; touch();
+        G.view.loading = 'Finding Moroccan chaabi 🇲🇦…'; touch();
         const ch = await Hits.chaabi();
-        if (!ch.length && pool.length < 12) throw new Error('Impossible de charger le chaabi (Deezer / iTunes). Vérifie ta connexion ou coche d\'autres styles.');
+        if (!ch.length && pool.length < 12) throw new Error('Could not load chaabi songs (Deezer / iTunes). Check your connection or tick other styles.');
         pool = pool.concat(ch);
       }
-      if (pool.length < 12) throw new Error(`Seulement ${pool.length} chansons avec ces choix : coche plus de décennies ou de styles.`);
+      if (pool.length < 12) throw new Error(`Only ${pool.length} songs with these choices: tick more decades or styles.`);
     } else {
       pool = await API.loadPool(G.settings.difficulty);
     }
     if (gen !== G.gen) return;
     G.bank = isLogos() ? new LogoBank(pool) : isHits() ? new HitsBank(pool) : isMusic() ? new MusicBank(pool) : new QuestionBank(pool);
-    G.view.loading = isMusic() ? 'Recherche des openings et endings…' : 'Préparation des images…';
+    G.view.loading = isMusic() ? 'Finding openings and endings…' : 'Preparing the pictures…';
     touch();
     await G.bank.fill();
     if (gen !== G.gen) return;
@@ -950,7 +950,7 @@ function render(v) {
   const fresh = seen.screen !== v.screen;
   seen.screen = v.screen;
   if (v.screen === 'lobby') renderLobby(v);
-  if (v.screen === 'loading') $('#loadingText').textContent = v.loading || 'Chargement…';
+  if (v.screen === 'loading') $('#loadingText').textContent = v.loading || 'Loading…';
   if (v.screen === 'intro') renderIntro(v);
   if (v.screen === 'play') renderPlay(v);
   if (v.screen === 'roundEnd') renderEnd(v);
@@ -982,18 +982,18 @@ function effects(v) {
 
 function btnHTML(label, a, who, cls = 'btn primary big', waitFor) {
   if (canDo(who)) return `<button class="${cls}" data-act="${a}" data-enter>${label}</button>`;
-  return `<p class="waiting">⏳ En attente de ${esc(waitFor || "l'hôte")}…</p>`;
+  return `<p class="waiting">⏳ Waiting for ${esc(waitFor || 'the host')}…</p>`;
 }
 
 function renderLobby(v) {
   const L = v.lobby || {};
   $('#lobbyCode').textContent = L.code || '';
   setHTML($('#lobbyPlayers'), v.players.map(p =>
-    `<span class="chip" style="--c:${p.color}">${esc(p.name)}${p.id === G.me ? ' <small>(toi)</small>' : ''}${p.id === 0 ? ' 👑' : ''}</span>`).join(''));
+    `<span class="chip" style="--c:${p.color}">${esc(p.name)}${p.id === G.me ? ' <small>(you)</small>' : ''}${p.id === 0 ? ' 👑' : ''}</span>`).join(''));
   const n = v.players.length;
   $('#lobbyMsg').innerHTML = G.isHost
-    ? (n < 2 ? 'Envoie le code ou le lien à ton ami pour qu\'il te rejoigne.' : `${n} / ${MAX_ONLINE} joueurs. Lance quand tout le monde est là !`)
-    : 'Connecté ! En attente que l\'hôte lance la partie…';
+    ? (n < 2 ? 'Send the code or the link to your friends so they can join.' : `${n} / ${MAX_ONLINE} players. Start when everyone is here!`)
+    : 'Connected! Waiting for the host to start the game…';
   $('#lobbyError').textContent = L.error || '';
   $('#lobbyQuiz').textContent = L.quiz ? `${L.quiz} · ${L.diff}` : '';
   const start = $('#lobbyStart');
@@ -1004,7 +1004,7 @@ function renderLobby(v) {
 function chipsHTML(v, ids) {
   return ids.map(id => {
     const p = vPlayer(v, id);
-    return `<span class="chip" style="--c:${p.color}">${v.online ? '' : `<kbd>${p.key.toUpperCase()}</kbd>`}${esc(p.name)}${v.online && id === G.me ? ' <small>(toi)</small>' : ''}</span>`;
+    return `<span class="chip" style="--c:${p.color}">${v.online ? '' : `<kbd>${p.key.toUpperCase()}</kbd>`}${esc(p.name)}${v.online && id === G.me ? ' <small>(you)</small>' : ''}</span>`;
   }).join('');
 }
 
@@ -1015,7 +1015,7 @@ function renderIntro(v) {
   $('#introSubtitle').textContent = I.subtitle;
   setHTML($('#introRules'), I.rules.map(r => `<li>${esc(r)}</li>`).join(''));
   setHTML($('#introPlayers'), chipsHTML(v, I.ids));
-  setHTML($('#introAction'), btnHTML("C'est parti !", 'introGo', 'host'));
+  setHTML($('#introAction'), btnHTML("Let's go!", 'introGo', 'host'));
 }
 
 function renderEnd(v) {
@@ -1035,10 +1035,10 @@ function renderChamp(v) {
   const w = vPlayer(v, C.id);
   $('#champName').textContent = w.name;
   $('#champName').style.color = w.color;
-  $('#champScore').innerHTML = C.scores.map(s => `${esc(vPlayer(v, s.id).name)} : <b>${s.score}</b>`).join(' · ');
+  $('#champScore').innerHTML = C.scores.map(s => `${esc(vPlayer(v, s.id).name)}: <b>${s.score}</b>`).join(' · ');
   setHTML($('#champAction'),
-    (canDo('host') ? '<button class="btn primary big" data-act="replay" data-enter>Revanche !</button>' : '<p class="waiting">L\'hôte peut lancer une revanche…</p>') +
-    '<button class="btn ghost" data-act="home">Accueil</button>');
+    (canDo('host') ? '<button class="btn primary big" data-act="replay" data-enter>Rematch!</button>' : '<p class="waiting">The host can start a rematch…</p>') +
+    '<button class="btn ghost" data-act="home">Home</button>');
 }
 
 function renderPlay(v) {
@@ -1054,9 +1054,9 @@ function renderPlay(v) {
     const cls = [...s.cls, v.online && s.id === G.me && 'me', p.offline && 'offline'].filter(Boolean).join(' ');
     return `<div class="pcard ${cls}" style="--c:${p.color}">
         ${v.online ? '' : `<kbd>${esc(p.key.toUpperCase())}</kbd>`}
-        <span class="pname">${esc(p.name)}${v.online && s.id === G.me ? ' <small>(toi)</small>' : ''}</span>
+        <span class="pname">${esc(p.name)}${v.online && s.id === G.me ? ' <small>(you)</small>' : ''}</span>
         <span class="pscore">${s.score}</span>
-        <span class="pbadge">${p.offline ? '📵 Déconnecté' : s.badge || ''}</span>
+        <span class="pbadge">${p.offline ? '📵 Offline' : s.badge || ''}</span>
       </div>`;
   }).join(''));
 
@@ -1084,11 +1084,11 @@ function renderPlay(v) {
     ms.classList.toggle('playing', playing);
     ms.classList.toggle('revealed', !!st.revealed);
     setHTML(ms, st.revealed
-      ? `<img class="ms-cover" src="${esc(st.cover)}" alt="" /><div class="ms-label">🎵 ${esc(st.label)}${st.song ? `<br><b>« ${esc(st.song)} »</b>` : ''}</div>`
+      ? `<img class="ms-cover" src="${esc(st.cover)}" alt="" /><div class="ms-label">🎵 ${esc(st.label)}${st.song ? `<br><b>“${esc(st.song)}”</b>` : ''}</div>`
       : `<div class="eq">${'<span></span>'.repeat(9)}</div>
          <div class="ms-label">🎵 ${esc(st.label)}</div>
          ${st.value ? `<div class="ms-value">${[1, 2, 3, 4].map(i => `<span class="${i <= st.value ? 'on' : ''}"></span>`).join('')}<b>${st.value} pts</b></div>` : ''}
-         <button class="btn small ghost unmute ${Player.blocked ? '' : 'hidden'}" data-act="unmute">🔊 Activer le son</button>`);
+         <button class="btn small ghost unmute ${Player.blocked ? '' : 'hidden'}" data-act="unmute">🔊 Turn on sound</button>`);
   }
 
   // grid
@@ -1134,7 +1134,7 @@ function renderPlay(v) {
   }
   if (P.choices && P.choices.armed != null && v.online && P.choices.armed !== G.me) {
     const bp = vPlayer(v, P.choices.armed);
-    html += `<p class="waiting">✋ <b style="color:${bp.color}">${esc(bp.name)}</b> a buzzé et choisit sa réponse…</p>`;
+    html += `<p class="waiting">✋ <b style="color:${bp.color}">${esc(bp.name)}</b> buzzed and is choosing an answer…</p>`;
   } else if (P.choices) {
     const c = P.choices;
     const mine = c.armed != null && (!v.online || c.armed === G.me);
@@ -1149,11 +1149,11 @@ function renderPlay(v) {
     if (canDo(inp.for) && !(v.online && G.isHost && inp.for !== G.me)) {
       html += `<form id="ansForm" class="ans-form" autocomplete="off" data-key="${esc(inp.key)}">
           <input id="ansInput" type="text" placeholder="${esc(inp.placeholder)}" spellcheck="false" autocapitalize="off" autocomplete="off" ${inp.enabled ? '' : 'disabled'} />
-          <button class="btn primary" type="submit" ${inp.enabled ? '' : 'disabled'}>Valider</button>
-          ${inp.pass ? `<button type="button" class="btn ghost" data-act="pass" ${inp.enabled ? '' : 'disabled'}>Passer</button>` : ''}
+          <button class="btn primary" type="submit" ${inp.enabled ? '' : 'disabled'}>Submit</button>
+          ${inp.pass ? `<button type="button" class="btn ghost" data-act="pass" ${inp.enabled ? '' : 'disabled'}>Skip</button>` : ''}
         </form>`;
     } else {
-      html += `<p class="waiting">✍️ <b style="color:${vPlayer(v, inp.for).color}">${esc(inp.name)}</b> est en train de répondre…</p>`;
+      html += `<p class="waiting">✍️ <b style="color:${vPlayer(v, inp.for).color}">${esc(inp.name)}</b> is answering…</p>`;
     }
   }
   if (setHTML($('#answerArea'), html)) {
@@ -1172,10 +1172,10 @@ function renderPlay(v) {
   if (showBuzz) {
     const ok = B.open && B.ids.includes(G.me);
     bb.disabled = !ok;
-    let label = 'BUZZ !';
+    let label = 'BUZZ!';
     if (!ok) {
-      if (buzzerId != null && !B.open) label = buzzerId === G.me ? '✋ À toi de répondre !' : `⏸ ${vPlayer(v, buzzerId).name} répond…`;
-      else if (B.open) label = '🔒 Bloqué';
+      if (buzzerId != null && !B.open) label = buzzerId === G.me ? '✋ Your turn to answer!' : `⏸ ${vPlayer(v, buzzerId).name} is answering…`;
+      else if (B.open) label = '🔒 Locked';
       else label = '…';
     }
     if (bb.textContent !== label) bb.textContent = label;
@@ -1302,8 +1302,8 @@ const Net = (() => {
   }
   function netError(e) {
     const t = e && e.type;
-    if (t === 'peer-unavailable') return 'Salle introuvable : vérifie le code (et que l\'hôte est toujours sur la page).';
-    if (t === 'network' || t === 'server-error' || t === 'socket-error') return 'Problème de connexion au serveur de jeu. Vérifie ta connexion internet.';
+    if (t === 'peer-unavailable') return 'Room not found: check the code (and that the host still has the page open).';
+    if (t === 'network' || t === 'server-error' || t === 'socket-error') return 'Problem reaching the game server. Check your internet connection.';
     if (t === 'browser-incompatible') return 'Ce navigateur ne permet pas de jouer en ligne.';
     return 'Erreur de connexion' + (t ? ` (${t})` : '') + '.';
   }
@@ -1334,16 +1334,16 @@ const Net = (() => {
       const back = conn.pid != null && byId(conn.pid);
       if (back && back.offline && !back.conn) {   // a silent phone woke up
         back.offline = false; back.conn = conn;
-        showToast(`✅ ${esc(back.name)} est de retour`, { kind: 'good' });
+        showToast(`✅ ${esc(back.name)} is back`, { kind: 'good' });
         if (G.round && G.round.scores) G.round.scores();
         touch();
       }
       if (msg.t === 'hello') {
-        const name = String(msg.name || '').trim().slice(0, 16) || 'Invité';
+        const name = String(msg.name || '').trim().slice(0, 16) || 'Guest';
         let p = G.players.find(x => x.offline && x.name.toLowerCase() === name.toLowerCase());
         if (!p) {
-          if (G.inGame) return refuse(conn, 'La partie a déjà commencé. Attends la fin ou demande une nouvelle salle.');
-          if (G.players.length >= MAX_ONLINE) return refuse(conn, `La salle est pleine (${MAX_ONLINE} joueurs max).`);
+          if (G.inGame) return refuse(conn, 'The game has already started. Wait for it to end, or ask for a new room.');
+          if (G.players.length >= MAX_ONLINE) return refuse(conn, `The room is full (${MAX_ONLINE} players max).`);
           const used = new Set(G.players.map(x => x.color));
           p = { id: ++G.nextId, name, color: COLORS.find(c => !used.has(c)) || COLORS[0], key: '' };
           if (G.players.some(x => x.name.toLowerCase() === name.toLowerCase())) p.name = name + ' ' + (G.players.length + 1);
@@ -1367,7 +1367,7 @@ const Net = (() => {
       p.conn = null;
       if (G.inGame) {
         p.offline = true;
-        showToast(`📵 ${esc(p.name)} ne répond plus`, { kind: 'bad', ms: 3000 });
+        showToast(`📵 ${esc(p.name)} is not responding`, { kind: 'bad', ms: 3000 });
         if (G.round && G.round.scores) G.round.scores();
       } else {
         G.players = G.players.filter(x => x !== p);
@@ -1394,7 +1394,7 @@ const Net = (() => {
         peer.destroy();
         reject(new Error(m));
       };
-      const to = setTimeout(() => fail('Impossible de rejoindre la salle (délai dépassé). Réessaie.'), 20000);
+      const to = setTimeout(() => fail('Couldn\'t join the room (timed out). Try again.'), 20000);
       peer.on('error', e => { if (!done) fail(netError(e)); else console.warn('peer error', e.type); });
       peer.on('open', () => {
         const conn = peer.connect(PREFIX + code, { reliable: true });
@@ -1412,7 +1412,7 @@ const Net = (() => {
             render(msg.view);
           }
         });
-        conn.on('close', () => { if (welcomed && G.hostConn === conn) leaveToHome('Connexion perdue avec l\'hôte.'); });
+        conn.on('close', () => { if (welcomed && G.hostConn === conn) leaveToHome('Lost the connection to the host.'); });
       });
     });
   }
@@ -1434,7 +1434,7 @@ async function hostRoom() {
   if (!name) { $('#homeError').textContent = 'Choisis un pseudo !'; $('#myName').focus(); return; }
   localStorage.setItem('aqc-me', name);
   $('#homeError').textContent = '';
-  showScreen('loading'); $('#loadingText').textContent = 'Création de la salle…';
+  showScreen('loading'); $('#loadingText').textContent = 'Creating the room…';
   try {
     const code = await Net.host();
     G.online = true; G.isHost = true; G.me = 0; G.nextId = 0; G.inGame = false;
@@ -1456,10 +1456,10 @@ async function joinRoom() {
   const name = $('#myName').value.trim();
   const code = $('#joinCode').value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (!name) { $('#homeError').textContent = 'Choisis un pseudo !'; $('#myName').focus(); return; }
-  if (code.length !== 5) { $('#homeError').textContent = 'Le code de la salle fait 5 caractères.'; $('#joinCode').focus(); return; }
+  if (code.length !== 5) { $('#homeError').textContent = 'The room code has 5 characters.'; $('#joinCode').focus(); return; }
   localStorage.setItem('aqc-me', name);
   $('#homeError').textContent = '';
-  showScreen('loading'); $('#loadingText').textContent = 'Connexion à la salle ' + code + '…';
+  showScreen('loading'); $('#loadingText').textContent = 'Joining room ' + code + '…';
   G.online = true; G.isHost = false;
   G.view = freshView();
   try {
@@ -1476,7 +1476,7 @@ function shareRoom() {
   const url = location.origin + location.pathname + '?join=' + code;
   const text = `Rejoins ma partie d'Anime Quiz Champion ! Code : ${code}`;
   if (navigator.share) navigator.share({ title: 'Anime Quiz Champion', text, url }).catch(() => {});
-  else if (navigator.clipboard) navigator.clipboard.writeText(url).then(() => showToast('Lien copié ! Envoie-le à ton ami.', { kind: 'good' }));
+  else if (navigator.clipboard) navigator.clipboard.writeText(url).then(() => showToast('Link copied! Send it to your friends.', { kind: 'good' }));
   else prompt('Copie ce lien :', url);
 }
 
@@ -1496,7 +1496,7 @@ setInterval(() => {
   } else if (G.online && G.hostConn) {
     if (frozen) G.lastHost = now;
     try { if (G.hostConn.open) G.hostConn.send({ t: 'ping' }); } catch (e) { /* ignore */ }
-    if (now - (G.lastHost || now) > 10000 && now - (G.warnedHost || 0) > 10000) { G.warnedHost = now; showToast('⏳ L\'hôte ne répond plus… (son téléphone est peut-être en veille)', { kind: 'bad', ms: 4000 }); }
+    if (now - (G.lastHost || now) > 10000 && now - (G.warnedHost || 0) > 10000) { G.warnedHost = now; showToast('⏳ The host isn\'t responding… (their phone may be asleep)', { kind: 'bad', ms: 4000 }); }
   }
 }, 2000);
 
@@ -1520,10 +1520,10 @@ document.addEventListener('click', e => {
   const v = el.dataset.v != null && /^-?\d+$/.test(el.dataset.v) ? +el.dataset.v : el.dataset.v;
   switch (a) {
     case 'home':
-      if (!G.inGame || confirm('Quitter la partie ?')) leaveToHome();
+      if (!G.inGame || confirm('Leave the game?')) leaveToHome();
       break;
     case 'quit':
-      if (confirm(G.online && G.isHost ? 'Quitter ? La partie s\'arrêtera pour tout le monde.' : 'Quitter la partie en cours ?')) leaveToHome();
+      if (confirm(G.online && G.isHost ? 'Leave? The game will stop for everyone.' : 'Leave the current game?')) leaveToHome();
       break;
     case 'share': shareRoom(); break;
     case 'lobbyStart': startGame(); break;
@@ -1532,7 +1532,7 @@ document.addEventListener('click', e => {
     case 'unmute': Player.blocked = false; Player.play(); render(G.view); break;
     case 'choice': {
       const c = G.view.panel && G.view.panel.choices;
-      if (!G.online && c && c.armed == null) { showToast("Buzzez d'abord !"); break; }
+      if (!G.online && c && c.armed == null) { showToast('Buzz first!'); break; }
       act('choice', v);
       break;
     }
@@ -1583,7 +1583,7 @@ const Setup = {
   names: [],
   load() {
     try { this.names = JSON.parse(localStorage.getItem('aqc-names')) || []; } catch (e) { this.names = []; }
-    if (this.names.length < 2) this.names = ['Joueur 1', 'Joueur 2'];
+    if (this.names.length < 2) this.names = ['Player 1', 'Player 2'];
     let s = {};
     try { s = JSON.parse(localStorage.getItem('aqc-settings') || '{}'); } catch (e) { /* ignore */ }
     if (s.difficulty) $('#difficulty').value = s.difficulty;
@@ -1605,8 +1605,8 @@ const Setup = {
     const t = $('#theme').value;
     $('#home').dataset.theme = t;
     $('.logo').innerHTML = t === 'hits' ? 'Blind Test <span>Champion</span>' : t === 'logos' ? 'Logo Quiz <span>Champion</span>' : 'Anime Quiz <span>Champion</span>';
-    $('.tagline').textContent = t === 'hits' ? '1 chanson · 1 buzz · 1 seul champion' : t === 'logos' ? '1 logo flou · 1 marque · 1 seul champion' : t === 'music' ? '1 opening · 1 animé · 1 seul champion' : '4 images · 1 animé · 1 seul champion';
-    document.title = t === 'hits' ? 'Blind Test Champion — devine la chanson' : t === 'logos' ? 'Logo Quiz Champion — devine la marque' : 'Anime Quiz Champion — 4 images, 1 animé';
+    $('.tagline').textContent = t === 'hits' ? '1 song · 1 buzz · 1 champion' : t === 'logos' ? '1 blurry logo · 1 brand · 1 champion' : t === 'music' ? '1 opening · 1 anime · 1 champion' : '4 pictures · 1 anime · 1 champion';
+    document.title = t === 'hits' ? 'Blind Test Champion — guess the song' : t === 'logos' ? 'Logo Quiz Champion — guess the brand' : 'Anime Quiz Champion — 4 pictures, 1 anime';
   },
   setMode(mode) {
     this.mode = mode;
@@ -1655,7 +1655,7 @@ function confetti() {
 /* ---------------- Wiring ---------------- */
 $('#theme').addEventListener('change', () => Setup.applyTheme());
 $$('.mode-tabs .tab').forEach(t => { t.onclick = () => { Setup.setMode(t.dataset.mode); $('#homeError').textContent = ''; }; });
-$('#addPlayer').onclick = () => { if (Setup.names.length < MAX_LOCAL) { Setup.names.push(`Joueur ${Setup.names.length + 1}`); Setup.render(); } };
+$('#addPlayer').onclick = () => { if (Setup.names.length < MAX_LOCAL) { Setup.names.push(`Player ${Setup.names.length + 1}`); Setup.render(); } };
 $('#startBtn').onclick = () => { Sound.unlock(); Player.unlock(); G.online = false; G.isHost = true; startGame(); };
 $('#hostBtn').onclick = () => { Sound.unlock(); Player.unlock(); hostRoom(); };
 $('#joinBtn').onclick = () => { Sound.unlock(); Player.unlock(); joinRoom(); };

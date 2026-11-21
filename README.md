@@ -47,8 +47,17 @@ The phones connect directly to each other (WebRTC through [PeerJS](https://peerj
 On GitHub: **Settings → Pages → Deploy from a branch**, then pick this branch and `/ (root)`.
 
 ## 🃏 Durak (card game)
-Open `/durak/`. The classic Russian card game (podkidnoy rules: other players can throw in cards), 36-card deck.
+Open `/durak/`. Dedicated to our Ukrainian friend who taught us the game 💙💛.
+
+Traditional rules, 36-card deck, two versions chosen by the host in the room:
+- **Podkidnoy (classic):** everyone except the defender can throw in cards of a rank already on the table.
+- **Perevodnoy (transfer):** before beating anything, the defender can play a card of the same rank to pass the
+  whole attack on to the next player (if that player holds enough cards to answer it). The new defender can transfer again.
+
+Also traditional: at most 5 attacking cards in the first bout of a game; first game starts with the lowest trump;
+in the next games **the Durak deals and is attacked first**.
+
 - **Online:** create a room and share the code/link, 2 to 6 players. Each phone only sees its own hand.
-- **Bots:** the host can add computer players 🤖 to fill the table, or play solo with **Jouer contre l'ordinateur**.
-  If someone disconnects mid-game, a bot plays their hand.
+- **Bots:** the host can add computer players 🤖, or play solo with **Play against the computer**.
+  If someone's phone goes silent mid-game, a bot plays their hand until they're back.
 - The last player holding cards is the **Durak**; the room keeps count across games.

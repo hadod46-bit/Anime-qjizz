@@ -101,3 +101,18 @@
 @media (max-height: 700px) {
   :root { --cw: clamp(44px, 11vw, 64px); }
 }
+
+/* tribute + transfer */
+.tribute {
+  display: flex; align-items: center; gap: 12px; text-align: left;
+  margin: -6px auto 22px; max-width: 520px; padding: 12px 16px; border-radius: 16px;
+  background: linear-gradient(90deg, rgba(0, 87, 183, 0.25), rgba(255, 215, 0, 0.18));
+  border: 1px solid rgba(255, 215, 0, 0.35);
+}
+.tribute p { margin: 0; font-weight: 600; }
+.tribute small { color: var(--muted); font-weight: 400; }
+.tribute .flag { flex-shrink: 0; width: 42px; height: 28px; border-radius: 4px; background: linear-gradient(#0057b7 50%, #ffd700 50%); box-shadow: 0 2px 8px rgba(0,0,0,0.4); }
+.tribute-small { color: var(--muted); font-size: 0.85rem; margin: 16px 0 0; }
+.variant-select { max-width: 340px; margin: 6px auto 0; display: block; }
+.variant-tag { color: var(--gold); }
+.btn.transfer { background: linear-gradient(135deg, #4dabff, #7c5cff); border: none; color: #fff; }

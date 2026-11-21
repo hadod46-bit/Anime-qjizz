@@ -4,12 +4,12 @@
    ========================================================== */
 const LOGO_CATS = [
   { id: 'apps', label: '📱 Apps & Web' },
-  { id: 'tech', label: '💻 High-tech' },
-  { id: 'auto', label: '🚗 Voitures' },
+  { id: 'tech', label: '💻 Tech' },
+  { id: 'auto', label: '🚗 Cars' },
   { id: 'sport', label: '👟 Sport' },
-  { id: 'food', label: '🍔 Food & Magasins' },
-  { id: 'games', label: '🎮 Jeux vidéo' },
-  { id: 'misc', label: '✈️ Voyage & Divers' },
+  { id: 'food', label: '🍔 Food & Shops' },
+  { id: 'games', label: '🎮 Video games' },
+  { id: 'misc', label: '✈️ Travel & More' },
 ];
 
 const Logos = (() => {
@@ -21,7 +21,7 @@ const Logos = (() => {
       const s = document.createElement('script');
       s.src = 'js/logos.js';
       s.onload = () => resolve();
-      s.onerror = () => { loading = null; reject(new Error('Impossible de charger les logos. Vérifie ta connexion.')); };
+      s.onerror = () => { loading = null; reject(new Error('Could not load the logos. Check your connection.')); };
       document.head.appendChild(s);
     });
     return loading;

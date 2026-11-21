@@ -4,7 +4,7 @@
    ========================================================== */
 
 // [year, style, artist, title, (optional) other accepted answers]
-// styles: pop · rap · rock · rnb (R&B / soul) · dance (disco / électro) · fr (chanson française)
+// styles: pop · rap · rock · rnb (R&B / soul) · dance (disco / electronic) · fr (French songs)
 const HITS = [
   // ---------- 70s ----------
   [1970, 'pop', 'Simon & Garfunkel', 'Bridge over Troubled Water'],
@@ -267,8 +267,8 @@ const STYLES = [
   { id: 'rap', label: 'Rap' },
   { id: 'rock', label: 'Rock' },
   { id: 'rnb', label: 'R&B / Soul' },
-  { id: 'dance', label: 'Disco / Électro' },
-  { id: 'fr', label: '🇫🇷 Français' },
+  { id: 'dance', label: 'Disco / Electronic' },
+  { id: 'fr', label: '🇫🇷 French' },
   { id: 'chaabi', label: '🇲🇦 Chaabi' },   // loaded live from Deezer playlists (see Hits.chaabi)
 ];
 const decadeOf = year => DECADES.find(d => year >= d.from && year < d.from + 10) || DECADES[DECADES.length - 1];
@@ -427,7 +427,7 @@ class HitsBank extends MusicBank {
             m.coverImage = { large: r.cover || '' };
             this.ready.push({ media: m, audio: { url: r.url, label: m.decade || m.styleLabel } });
           });
-          if (!this.ready.length && misses >= 9) throw new Error('Impossible de charger les extraits musicaux (Deezer / iTunes). Vérifie ta connexion.');
+          if (!this.ready.length && misses >= 9) throw new Error('Could not load the song previews (Deezer / iTunes). Check your connection.');
         }
       } finally {
         this.filling = null;

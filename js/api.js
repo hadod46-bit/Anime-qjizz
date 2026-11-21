@@ -49,7 +49,7 @@ const API = (() => {
     }`;
 
   async function gql(query, variables, tries = 4) {
-    let lastErr = 'AniList ne répond pas.';
+    let lastErr = 'AniList is not responding.';
     for (let i = 0; i < tries; i++) {
       let res;
       try {
@@ -60,19 +60,19 @@ const API = (() => {
         });
       } catch (e) {
         // Network error, or a 429 without CORS headers
-        lastErr = 'Impossible de joindre AniList (connexion internet ?)';
+        lastErr = 'Could not reach AniList (internet connection?)';
         await sleep(2500 * (i + 1));
         continue;
       }
       if (res.status === 429) {
         const ra = parseInt(res.headers.get('Retry-After'), 10);
-        lastErr = 'Trop de requêtes vers AniList, patiente une minute.';
+        lastErr = 'Too many requests to AniList, wait a minute.';
         await sleep((Number.isFinite(ra) ? ra : 5) * 1000);
         continue;
       }
       const json = await res.json().catch(() => null);
       if (!res.ok || !json || json.errors) {
-        lastErr = 'Erreur AniList : ' + ((json && json.errors && json.errors[0] && json.errors[0].message) || res.status);
+        lastErr = 'AniList error: ' + ((json && json.errors && json.errors[0] && json.errors[0].message) || res.status);
         await sleep(1500);
         continue;
       }
@@ -100,7 +100,7 @@ const API = (() => {
       m.base = keys[0];
       pool.push(m);
     }
-    if (pool.length < 12) throw new Error("Pas assez d'animés récupérés, réessaie.");
+    if (pool.length < 12) throw new Error('Not enough anime loaded, try again.');
     return pool;
   }
 
@@ -276,15 +276,15 @@ const Themes = (() => {
   const ENDPOINT = 'https://api.animethemes.moe/anime';
 
   async function get(url, tries = 3) {
-    let last = 'AnimeThemes ne répond pas.';
+    let last = 'AnimeThemes is not responding.';
     for (let i = 0; i < tries; i++) {
       try {
         const res = await fetch(url, { headers: { Accept: 'application/json' } });
-        if (res.status === 429) { last = 'Trop de requêtes vers AnimeThemes.'; await sleep(5000); continue; }
-        if (!res.ok) { last = 'Erreur AnimeThemes : ' + res.status; await sleep(1500); continue; }
+        if (res.status === 429) { last = 'Too many requests to AnimeThemes.'; await sleep(5000); continue; }
+        if (!res.ok) { last = 'AnimeThemes error: ' + res.status; await sleep(1500); continue; }
         return await res.json();
       } catch (e) {
-        last = 'Impossible de joindre AnimeThemes (connexion internet ?)';
+        last = 'Could not reach AnimeThemes (internet connection?)';
         await sleep(2000 * (i + 1));
       }
     }
@@ -372,7 +372,7 @@ class MusicBank extends QuestionBank {
             this.ready.push({ media: m, audio: pick });
             added++;
           }
-          if (!added && ++empty >= 3) throw new Error("Impossible de trouver des musiques d'animés (AnimeThemes).");
+          if (!added && ++empty >= 3) throw new Error('Could not find anime songs (AnimeThemes).');
         }
       } finally {
         this.filling = null;
@@ -394,7 +394,7 @@ class MusicBank extends QuestionBank {
       }
       if (ok) return q;
     }
-    throw new Error('Les musiques ne se chargent pas. Vérifie ta connexion.');
+    throw new Error('The songs won\'t load. Check your connection.');
   }
 
   prefetchUrls() { return this.ready.slice(0, 1).map(q => q.audio.url); }
